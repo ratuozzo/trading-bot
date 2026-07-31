@@ -71,3 +71,53 @@ def test_cooldown_blocks_immediate_reentry():
     sig = s.on_tick(Tick("BTCUSDT", 101.0, 5.0), in_position=False, entry_price=0.0)
     assert sig.type == SignalType.HOLD
     assert sig.reason == "cooldown"
+
+
+# -- signal / execution split (lead-lag setups) ----------------------------
+
+def test_exec_price_drives_take_profit_not_signal_price():
+    """With a fast signal feed and a different execution venue, TP/SL must be
+    measured on the exec venue — otherwise basis between the two books would
+    trigger phantom exits."""
+    cfg = StrategyConfig(take_profit=0.002, stop_loss=0.5, reversal_exit=0.5)
+    s = MomentumScalper(cfg)
+
+    # Signal venue (a perp) trades $500 above the spot book we entered on.
+    # The perp is up over 0.2% but spot has not moved -> must NOT take profit.
+    sig = s.on_tick(
+        Tick("BTCUSDT", 100_500.0, 10.0),
+        in_position=True, entry_price=100_000.0, exec_price=100_000.0,
+    )
+    assert sig.type == SignalType.HOLD
+
+    # Now spot itself clears the target -> take profit.
+    sig = s.on_tick(
+        Tick("BTCUSDT", 100_500.0, 11.0),
+        in_position=True, entry_price=100_000.0, exec_price=100_250.0,
+    )
+    assert sig.type == SignalType.EXIT_LONG
+    assert "take profit" in sig.reason
+
+
+def test_exec_price_defaults_to_signal_price():
+    """Single-venue behaviour is unchanged when exec_price is omitted."""
+    cfg = StrategyConfig(take_profit=0.002, stop_loss=0.5, reversal_exit=0.5)
+    a = MomentumScalper(cfg)
+    b = MomentumScalper(cfg)
+    t = Tick("BTCUSDT", 100.3, 10.0)
+    assert (
+        a.on_tick(t, in_position=True, entry_price=100.0).type
+        == b.on_tick(t, in_position=True, entry_price=100.0, exec_price=100.3).type
+    )
+
+
+def test_stop_loss_uses_exec_price():
+    cfg = StrategyConfig(take_profit=0.5, stop_loss=0.0015, reversal_exit=0.5)
+    s = MomentumScalper(cfg)
+    # Signal venue flat, exec venue down 0.3% -> stop out on the exec venue.
+    sig = s.on_tick(
+        Tick("BTCUSDT", 100_000.0, 10.0),
+        in_position=True, entry_price=100_000.0, exec_price=99_700.0,
+    )
+    assert sig.type == SignalType.EXIT_LONG
+    assert "stop loss" in sig.reason

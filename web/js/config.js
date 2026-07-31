@@ -3,8 +3,18 @@
 
 export const DEFAULTS = {
   base: 'BTC',              // base asset; each feed maps it to its own symbol
-  primaryFeed: 'binance-futures',
+
+  // signalFeed drives the decisions; execFeed is where the (simulated) fills
+  // happen. Set them to the same venue for plain single-venue momentum, or to
+  // different ones to trade a lead-lag idea (fast perp signal -> spot fills).
+  signalFeed: 'binance-futures',
+  execFeed: 'binance-spot',
   racing: ['binance-futures', 'bybit', 'okx', 'binance-spot'],
+
+  leadlag: {
+    thresholdBp: 3,     // signal move that counts as an event
+    windowMs: 500,      // ...measured over this window
+  },
 
   strategy: {
     lookbackSeconds: 5.0,
@@ -25,7 +35,10 @@ export const DEFAULTS = {
 
   broker: {
     startingCash: 10000,
-    feeBps: 5.0,          // perp taker fees are typically lower than spot
+    // Binance SPOT taker is 0.10% (7.5bp with the BNB discount). Perps are
+    // cheaper. This must match wherever execFeed points, or the simulated
+    // results will flatter the strategy.
+    feeBps: 10.0,
     slippageBps: 2.0,
   },
 };
@@ -38,13 +51,21 @@ export function loadSettings() {
     if (!raw) return structuredClone(DEFAULTS);
     // Merge so newly-added defaults appear for existing users.
     const saved = JSON.parse(raw);
-    return {
+    const merged = {
       ...structuredClone(DEFAULTS),
       ...saved,
       strategy: { ...DEFAULTS.strategy, ...(saved.strategy || {}) },
       risk: { ...DEFAULTS.risk, ...(saved.risk || {}) },
       broker: { ...DEFAULTS.broker, ...(saved.broker || {}) },
+      leadlag: { ...DEFAULTS.leadlag, ...(saved.leadlag || {}) },
     };
+    // Older saves used a single `primaryFeed`.
+    if (saved.primaryFeed && !saved.signalFeed) {
+      merged.signalFeed = saved.primaryFeed;
+      merged.execFeed = saved.primaryFeed;
+    }
+    delete merged.primaryFeed;
+    return merged;
   } catch {
     return structuredClone(DEFAULTS);
   }

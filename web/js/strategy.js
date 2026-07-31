@@ -20,10 +20,20 @@ export class MomentumScalper {
 
   update(cfg) { this.cfg = cfg; }
 
+  /**
+   * `tick.price` is the SIGNAL price (the fast feed driving decisions).
+   * `tick.execPrice` is the price on the venue we actually trade, and defaults
+   * to the signal price when both are the same feed.
+   *
+   * The split matters: a perp and a spot book differ by basis, so measuring
+   * take-profit as (perp price vs spot entry) would be pure noise. Impulses
+   * come from the signal feed; profit and loss comes from the exec feed.
+   */
   onTick(tick, { inPosition, entryPrice }) {
     this._push(tick);
+    const execPrice = tick.execPrice ?? tick.price;
     return inPosition
-      ? this._exitDecision(tick, entryPrice)
+      ? this._exitDecision(tick, entryPrice, execPrice)
       : this._entryDecision(tick);
   }
 
@@ -63,9 +73,10 @@ export class MomentumScalper {
     return { type: SIGNAL.HOLD, reason: `no impulse (${(ret * 100).toFixed(3)}%)` };
   }
 
-  _exitDecision(tick, entryPrice) {
+  _exitDecision(tick, entryPrice, execPrice) {
     if (!entryPrice) return { type: SIGNAL.HOLD, reason: 'no entry price' };
-    const change = (tick.price - entryPrice) / entryPrice;
+    // Take-profit and stop-loss are real money, so they read the exec venue.
+    const change = (execPrice - entryPrice) / entryPrice;
 
     if (change >= this.cfg.takeProfit) {
       return { type: SIGNAL.EXIT_LONG, reason: `take profit +${(change * 100).toFixed(3)}%` };

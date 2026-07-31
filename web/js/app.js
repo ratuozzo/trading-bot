@@ -6,6 +6,7 @@ import { DEFAULTS, loadSettings, saveSettings } from './config.js';
 import { FEEDS, Feed, FeedRace } from './feeds.js';
 import { MomentumScalper, SIGNAL } from './strategy.js';
 import { PaperBroker, Portfolio, RiskManager } from './broker.js';
+import { LeadLagAnalyzer, roundTripCostBp } from './leadlag.js';
 
 const $ = (id) => document.getElementById(id);
 const nowMs = () => performance.timeOrigin + performance.now();
@@ -13,11 +14,13 @@ const nowMs = () => performance.timeOrigin + performance.now();
 let settings = loadSettings();
 let feeds = [];
 let race = new FeedRace();
+let leadlag = new LeadLagAnalyzer();
 let strategy, broker, portfolio, risk;
 let running = false;
-let lastPrice = null;
+let lastPrice = null;      // latest SIGNAL price
+let execPrice = null;      // latest price on the venue we trade
 let history = [];          // [{ts, price}] for the sparkline
-let msgTimestamps = [];    // for msg/s on the primary feed
+let msgTimestamps = [];    // for msg/s on the signal feed
 
 // ---------------------------------------------------------------- session
 
@@ -26,7 +29,12 @@ function newSession() {
   portfolio = new Portfolio(settings.broker.startingCash);
   risk = new RiskManager(settings.risk, settings.broker.startingCash);
   strategy = new MomentumScalper(settings.strategy);
+  leadlag = new LeadLagAnalyzer({
+    threshold: settings.leadlag.thresholdBp / 10000,
+    window: settings.leadlag.windowMs,
+  });
   lastPrice = null;
+  execPrice = null;
   history = [];
   msgTimestamps = [];
   $('haltNotice').classList.add('hidden');
@@ -39,8 +47,8 @@ function start() {
   stopFeeds();
   race = new FeedRace();
 
-  // Always include the trading feed in the race set.
-  const ids = new Set([settings.primaryFeed, ...settings.racing]);
+  // Both the signal and exec venues must be connected regardless of the race set.
+  const ids = new Set([settings.signalFeed, settings.execFeed, ...settings.racing]);
   feeds = [...ids].map((id) => {
     const feed = new Feed(id, settings.base, {
       onTick: handleTick,
@@ -75,11 +83,18 @@ function stopFeeds() {
 function handleTick(tick) {
   race.record(tick);
 
-  // Only the chosen feed drives trading decisions.
-  if (tick.feedId !== settings.primaryFeed) return;
+  // The exec venue supplies fill prices and feeds the lead-lag measurement.
+  if (tick.feedId === settings.execFeed) {
+    execPrice = tick.price;
+    leadlag.onExecTick(tick.price, tick.localTs);
+  }
+
+  // Everything else below is driven by the signal feed only.
+  if (tick.feedId !== settings.signalFeed) return;
 
   const t = { price: tick.price, ts: tick.localTs };
   lastPrice = t.price;
+  leadlag.onSignalTick(tick.price, tick.localTs);
 
   msgTimestamps.push(t.ts);
 
@@ -87,15 +102,19 @@ function handleTick(tick) {
   const hCut = t.ts - 60000;
   while (history.length > 1 && history[0].ts < hCut) history.shift();
 
-  const signal = strategy.onTick(t, {
-    inPosition: broker.inPosition,
-    entryPrice: broker.avgEntry,
-  });
+  // Can't price a fill until the exec venue has reported at least once.
+  const fillPrice = settings.execFeed === settings.signalFeed ? t.price : execPrice;
+  if (fillPrice === null) return;
+
+  const signal = strategy.onTick(
+    { ...t, execPrice: fillPrice },
+    { inPosition: broker.inPosition, entryPrice: broker.avgEntry },
+  );
 
   if (signal.type === SIGNAL.ENTER_LONG && !broker.inPosition) {
     const notional = risk.orderNotional(broker.cash);
     if (notional > 0) {
-      const fill = broker.buy(notional, t.price, t.ts);
+      const fill = broker.buy(notional, fillPrice, t.ts);
       if (fill) {
         portfolio.recordFill(fill);
         strategy.noteEntry(t.ts);
@@ -103,11 +122,11 @@ function handleTick(tick) {
       }
     }
   } else if (signal.type === SIGNAL.EXIT_LONG && broker.inPosition) {
-    const fill = broker.sell(broker.qty, t.price, t.ts);
+    const fill = broker.sell(broker.qty, fillPrice, t.ts);
     if (fill) {
       const trade = portfolio.recordFill(fill, signal.reason);
       strategy.noteExit(t.ts);
-      risk.updateEquity(broker.equity(t.price));
+      risk.updateEquity(broker.equity(fillPrice));
       if (risk.halted) $('haltNotice').classList.remove('hidden');
       renderTrades();
       renderStats();
@@ -243,7 +262,7 @@ function renderRace() {
       return `<tr class="${isBest && !dead ? 'fastest' : ''} ${dead ? 'dead' : ''}">
         <td><div class="venue">
           <span class="dot" data-state="${r.status}"></span>
-          ${escapeHtml(meta.label)}${r.feedId === settings.primaryFeed ? ' ★' : ''}
+          ${escapeHtml(meta.label)}${feedRole(r.feedId)}
         </div></td>
         <td class="r">${rate}</td>
         <td class="r">${lag}</td>
@@ -254,7 +273,66 @@ function renderRace() {
 
   const anyLive = rows.some((r) => r.status === 'live');
   $('masterDot').dataset.state = !running ? 'idle' : anyLive ? 'live' : 'connecting';
-  $('feedLabel').textContent = FEEDS[settings.primaryFeed]?.label ?? '—';
+
+  const sig = FEEDS[settings.signalFeed]?.label ?? '—';
+  const exe = FEEDS[settings.execFeed]?.label ?? '—';
+  $('feedLabel').textContent =
+    settings.signalFeed === settings.execFeed ? sig : `${sig} → ${exe}`;
+}
+
+// ✦ marks the signal venue, ● the execution venue.
+function feedRole(feedId) {
+  const isSignal = feedId === settings.signalFeed;
+  const isExec = feedId === settings.execFeed;
+  if (isSignal && isExec) return ' ✦●';
+  if (isSignal) return ' ✦';
+  if (isExec) return ' ●';
+  return '';
+}
+
+function renderLeadLag() {
+  const cost = roundTripCostBp(settings.broker);
+  $('costLabel').textContent = `${cost.toFixed(1)}bp`;
+
+  const rows = leadlag.summary();
+  $('leadlagTable').querySelector('tbody').innerHTML = rows
+    .map((r) => {
+      const has = r.samples > 0;
+      const med = has ? r.medianBp : null;
+      // Only a follow-through that clears the round trip is tradeable.
+      const cls = !has ? '' : med >= cost ? 'edge' : med > 0 ? 'weak' : 'noedge';
+      return `<tr class="${cls}">
+        <td>${r.horizon < 1000 ? `${r.horizon}ms` : `${r.horizon / 1000}s`}</td>
+        <td class="r">${has ? r.samples : '—'}</td>
+        <td class="r">${has ? `${med >= 0 ? '+' : ''}${med.toFixed(2)}` : '—'}</td>
+        <td class="r">${has ? `${(r.hitRate * 100).toFixed(0)}%` : '—'}</td>
+      </tr>`;
+    })
+    .join('');
+
+  $('llEvents').textContent = leadlag.events;
+
+  const best = rows.filter((r) => r.samples >= 30)
+    .reduce((a, r) => (a === null || r.medianBp > a.medianBp ? r : a), null);
+  const verdict = $('llVerdict');
+  if (!best) {
+    verdict.textContent = 'Collecting samples — needs 30+ per horizon to mean anything.';
+    verdict.className = 'hint';
+  } else if (best.medianBp >= cost) {
+    verdict.textContent =
+      `Follow-through at ${best.horizon}ms (${best.medianBp.toFixed(2)}bp) clears the ` +
+      `${cost.toFixed(1)}bp round trip. Worth paper-trading — but you still have to ` +
+      `reach the exchange inside that window.`;
+    verdict.className = 'hint verdict-good';
+  } else {
+    // Say "30+ samples" explicitly: a thinner horizon may show a bigger number
+    // in the table, and it would look like this is contradicting it.
+    verdict.textContent =
+      `Best follow-through over horizons with 30+ samples is ` +
+      `${best.medianBp.toFixed(2)}bp at ${best.horizon}ms — under the ` +
+      `${cost.toFixed(1)}bp round trip. No tradeable edge at these fees yet.`;
+    verdict.className = 'hint verdict-bad';
+  }
 }
 
 function renderSpark() {
@@ -309,10 +387,11 @@ function escapeHtml(s) {
 // ---------------------------------------------------------------- settings UI
 
 function buildSettingsUI() {
-  const feedSel = $('setFeed');
-  feedSel.innerHTML = Object.entries(FEEDS)
+  const opts = Object.entries(FEEDS)
     .map(([id, m]) => `<option value="${id}">${m.label}</option>`)
     .join('');
+  $('setSignalFeed').innerHTML = opts;
+  $('setExecFeed').innerHTML = opts;
 
   $('raceChecks').innerHTML = Object.entries(FEEDS)
     .map(([id, m]) => `<label><input type="checkbox" value="${id}" /> ${m.label}</label>`)
@@ -335,11 +414,14 @@ function buildSettingsUI() {
   });
 
   $('resetRace').addEventListener('click', () => { race.reset(); renderRace(); });
+  $('resetLl').addEventListener('click', () => { leadlag.reset(); renderLeadLag(); });
 }
 
 function syncSettingsUI() {
   $('setBase').value = settings.base;
-  $('setFeed').value = settings.primaryFeed;
+  $('setSignalFeed').value = settings.signalFeed;
+  $('setExecFeed').value = settings.execFeed;
+  $('setLlThreshold').value = settings.leadlag.thresholdBp;
   $('setEntry').value = (settings.strategy.entryThreshold * 100).toFixed(3);
   $('setTp').value = (settings.strategy.takeProfit * 100).toFixed(3);
   $('setSl').value = (settings.strategy.stopLoss * 100).toFixed(3);
@@ -358,7 +440,9 @@ function readSettingsUI() {
     return Number.isFinite(v) ? v : fallback;
   };
   settings.base = $('setBase').value;
-  settings.primaryFeed = $('setFeed').value;
+  settings.signalFeed = $('setSignalFeed').value;
+  settings.execFeed = $('setExecFeed').value;
+  settings.leadlag.thresholdBp = num('setLlThreshold', DEFAULTS.leadlag.thresholdBp);
   settings.racing = [...document.querySelectorAll('#raceChecks input')]
     .filter((cb) => cb.checked)
     .map((cb) => cb.value);
@@ -386,6 +470,7 @@ document.addEventListener('visibilitychange', () => {
 buildSettingsUI();
 newSession();
 renderRace();
+renderLeadLag();
 
 // One render loop keeps the UI smooth no matter how fast ticks arrive —
 // rendering per-tick would melt the phone at 100+ msg/s.
@@ -395,3 +480,4 @@ setInterval(() => {
   renderRace();
 }, 250);
 setInterval(renderSpark, 500);
+setInterval(renderLeadLag, 1000);

@@ -27,11 +27,31 @@ class MomentumScalper:
         self._last_exit_time: float = float("-inf")
         self._entry_time: float | None = None
 
-    def on_tick(self, tick: Tick, *, in_position: bool, entry_price: float) -> Signal:
+    def on_tick(
+        self,
+        tick: Tick,
+        *,
+        in_position: bool,
+        entry_price: float,
+        exec_price: float | None = None,
+    ) -> Signal:
+        """Decide on this tick.
+
+        ``tick.price`` is the SIGNAL price (the feed driving decisions).
+        ``exec_price`` is the price on the venue actually traded, defaulting to
+        the signal price when they are the same feed.
+
+        The split matters when running a lead-lag setup: a perp and a spot book
+        differ by basis, so measuring take-profit as (perp price vs spot entry)
+        would be noise. Impulses come from the signal feed; profit and loss
+        comes from the exec feed.
+        """
         self._push(tick)
 
         if in_position:
-            return self._exit_decision(tick, entry_price)
+            return self._exit_decision(
+                tick, entry_price, tick.price if exec_price is None else exec_price
+            )
         return self._entry_decision(tick)
 
     # -- internals ---------------------------------------------------------
@@ -72,11 +92,14 @@ class MomentumScalper:
             )
         return Signal(SignalType.HOLD, f"no impulse ({ret * 100:+.3f}%)")
 
-    def _exit_decision(self, tick: Tick, entry_price: float) -> Signal:
+    def _exit_decision(
+        self, tick: Tick, entry_price: float, exec_price: float
+    ) -> Signal:
         if entry_price <= 0:
             return Signal(SignalType.HOLD, "no entry price")
 
-        change = (tick.price - entry_price) / entry_price
+        # Take-profit and stop-loss are real money, so they read the exec venue.
+        change = (exec_price - entry_price) / entry_price
 
         if change >= self.cfg.take_profit:
             return Signal(SignalType.EXIT_LONG, f"take profit +{change * 100:.3f}%")

@@ -63,7 +63,32 @@
       <p class="hint">
         Lag is measured with your device's clock on both sides, so it reflects
         real arrival order from <em>your</em> location — not exchange clock skew.
-        Whichever venue sits at 0ms is the one to trade on.
+        <b>✦</b> is the signal venue, <b>●</b> the one trades execute on.
+      </p>
+    </section>
+
+    <!-- Lead-lag edge -->
+    <section class="card">
+      <div class="row between">
+        <div class="label">Lead-lag edge <span class="dim">— does exec follow signal?</span></div>
+        <button class="mini" id="resetLl">reset</button>
+      </div>
+      <table class="feeds" id="leadlagTable">
+        <thead>
+          <tr><th>After</th><th class="r">n</th><th class="r">Move (bp)</th><th class="r">Hit</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <div class="ll-meta">
+        <span><span class="dim">Signal events</span> <b class="mono" id="llEvents">0</b></span>
+        <span><span class="dim">Round trip costs</span> <b class="mono" id="costLabel">—</b></span>
+      </div>
+      <p class="hint" id="llVerdict">Collecting samples…</p>
+      <p class="hint">
+        When the signal venue jumps, this measures how far the execution venue
+        moves the same way afterwards. To be tradeable the move must beat the
+        round-trip cost <em>and</em> arrive before your order can reach the
+        exchange — seeing it first is not the same as getting there first.
       </p>
     </section>
 
@@ -95,8 +120,12 @@
         </select>
       </label>
 
-      <label>Trade on feed
-        <select id="setFeed"></select>
+      <label>Signal feed <span class="dim">— drives decisions (fastest venue)</span>
+        <select id="setSignalFeed"></select>
+      </label>
+
+      <label>Execution feed <span class="dim">— where fills are priced</span>
+        <select id="setExecFeed"></select>
       </label>
 
       <fieldset>
@@ -111,6 +140,7 @@
         <label>Lookback (s)<input type="number" id="setLookback" step="0.5" /></label>
         <label>Fee (bps)<input type="number" id="setFee" step="0.5" /></label>
         <label>Start cash<input type="number" id="setCash" step="100" /></label>
+        <label>Signal move (bp)<input type="number" id="setLlThreshold" step="0.5" /></label>
       </div>
 
       <div class="row gap">
@@ -119,8 +149,10 @@
       </div>
 
       <p class="hint">
-        Round-trip cost is roughly 2× fee + slippage. If take-profit doesn't
-        clearly beat that, the strategy loses money even when it's right.
+        Round-trip cost is 2× fee + 2× slippage. If take-profit doesn't clearly
+        beat that, the strategy loses money even when it's right. Binance spot
+        taker is 10bp (7.5bp with BNB); perps are cheaper — set the fee to match
+        wherever the execution feed points.
       </p>
     </details>
 
