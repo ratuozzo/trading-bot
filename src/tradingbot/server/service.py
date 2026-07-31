@@ -162,11 +162,16 @@ class TradingService:
                 "unrealized": pos.unrealized_pnl(mark),
             })
 
+        lookback = self.cfg.strategy.lookback_seconds
         scanner = [{
             "symbol": s,
             "price": st.last_price,
             "impulse": st.impulse,
             "ticks": st.ticks,
+            "tradeRate": st.trade_rate,
+            # False means this coin prints too rarely to fill the lookback
+            # window, so its impulse is structurally stuck at zero.
+            "canFire": st.can_fire(lookback),
         } for s, st in eng.states.items()]
 
         equity = eng.equity()

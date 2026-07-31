@@ -279,3 +279,7 @@ body.backend-mode .badge.mode { background: rgba(47,212,123,.15); color: var(--u
 #backendNote { color: var(--warn); font-weight: 600; margin: 0 0 4px; }
 #tokenRow { margin-top: 12px; }
 #tokenRow .mini { margin-top: 8px; }
+
+/* a coin that prints too rarely to fill the lookback window */
+.scan tr.thin td { opacity: .5; }
+.scan tr.thin .trade-meta { color: var(--warn); opacity: 1; }

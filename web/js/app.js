@@ -501,8 +501,14 @@ function applyServerState(st) {
           pos.side === 'SHORT' ? 'S' : 'L'}</span> ${fmtSigned(pos.unrealized)}`
       : '';
     const short = r.symbol.replace(/_USDT$/, '');
-    return `<tr class="${cls}" data-sym="${escapeHtml(r.symbol)}">
-      <td>${r.symbol === focus ? '<b>' + escapeHtml(short) + '</b>' : escapeHtml(short)}</td>
+    // A coin printing too rarely to fill the lookback window is stuck at
+    // 0.000% forever. Say so, rather than letting it look merely calm.
+    const dead = r.canFire === false;
+    const rate = r.tradeRate != null
+      ? `<div class="trade-meta">${r.tradeRate.toFixed(1)}/s${
+          dead ? ' · too thin to fire' : ''}</div>` : '';
+    return `<tr class="${cls} ${dead ? 'thin' : ''}" data-sym="${escapeHtml(r.symbol)}">
+      <td>${r.symbol === focus ? '<b>' + escapeHtml(short) + '</b>' : escapeHtml(short)}${rate}</td>
       <td class="r">${r.price ? fmtPrice(r.price) : '—'}</td>
       <td class="r" style="color:${
         r.impulse >= thr ? 'var(--up)' : r.impulse <= -thr ? 'var(--down)' : 'inherit'}">

@@ -317,3 +317,53 @@ def test_snapshot_is_json_serialisable(cfg, tmp_path):
     svc.engine.on_tick(Tick("AAA", 100.0, 1.0))
     blob = json.dumps(svc.snapshot())     # must not raise
     assert "scanner" in blob and "equity" in blob
+
+
+# -- trade rate / can-fire diagnostics -------------------------------------
+
+def test_sparse_coin_is_flagged_as_unable_to_fire(cfg):
+    """A coin printing once every 5s cannot fill a 2s window, so its impulse
+    is stuck at zero. That must be reported, not left looking like calm."""
+    cfg.strategy.lookback_seconds = 2.0
+    eng = build(cfg, ["AAA"], ramp("AAA", 100.0, 0.01, 12, dt=5.0))
+    run(eng)
+    st = eng.states["AAA"]
+    assert st.trade_rate < 0.5
+    assert not st.can_fire(2.0)
+    # ...and despite a +1%/tick ramp, no signal was ever produced.
+    assert eng.portfolio.num_trades == 0
+    assert not eng.broker.position("AAA").is_open
+
+
+def test_liquid_coin_is_flagged_as_able_to_fire(cfg):
+    cfg.strategy.lookback_seconds = 2.0
+    eng = build(cfg, ["AAA"], ramp("AAA", 100.0, 0.0002, 60, dt=0.1))
+    run(eng)
+    st = eng.states["AAA"]
+    assert st.trade_rate > 5
+    assert st.can_fire(2.0)
+
+
+def test_trade_rate_ignores_ancient_ticks(cfg):
+    """The rate is a rolling window, so a coin that goes quiet decays."""
+    from tradingbot.multi_engine import RATE_WINDOW
+    eng = build(cfg, ["AAA"], [])
+    st = eng.states["AAA"]
+    for i in range(20):
+        st.note_tick(i * 0.1)
+    assert st.trade_rate > 5
+    st.note_tick(1000.0)                     # long gap
+    assert len(st.recent) == 1               # everything older was dropped
+    assert st.trade_rate == 0.0
+
+
+def test_snapshot_reports_rate_and_can_fire(cfg, tmp_path):
+    from tradingbot.server.service import TradingService
+    cfg.server.state_file = str(tmp_path / "s.json")
+    cfg.feed.symbols = ["AAA"]
+    svc = TradingService(cfg)
+    for tick in ramp("AAA", 100.0, 0.0, 30, dt=0.1):
+        svc.engine.on_tick(tick)
+    row = svc.snapshot()["scanner"][0]
+    assert row["tradeRate"] > 5
+    assert row["canFire"] is True

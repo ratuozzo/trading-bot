@@ -5,7 +5,12 @@ export const DEFAULTS = {
   // Coins watched simultaneously. More coins means more chances to catch an
   // impulse — it does not improve any individual trade's odds, it just raises
   // how often a setup appears.
-  symbols: ['BTC', 'ETH', 'SOL', 'XRP', 'DOGE', 'BNB', 'ADA', 'LINK', 'AVAX', 'LTC'],
+  //
+  // MEASURED against MEXC, not guessed. A coin must print ~2 trades inside the
+  // lookback window or its impulse reads 0.000% forever and it can never fire.
+  // Most majors fail that on MEXC: XRP 0.34 trades/s, DOGE 0.29, BNB 0.11,
+  // LTC 0.10. Regenerate with: python scripts/pick_symbols.py --lookback 2
+  symbols: ['BTC', 'ETH', 'PEPE', 'HYPE', 'SOL'],
 
   // signalFeed drives the decisions; execFeed is where the (simulated) fills
   // happen. Same venue for plain momentum; different ones for a lead-lag idea.
@@ -32,7 +37,9 @@ export const DEFAULTS = {
   strategy: {
     // Shorter lookback = a stricter velocity filter: the same threshold has to
     // happen faster. Sub-second values are where cascades live.
-    lookbackSeconds: 1.0,
+    // 2s not 1s: at 1s only BTC/ETH/PEPE print often enough on MEXC to be
+    // measurable. 2s admits SOL and HYPE for a modest loosening.
+    lookbackSeconds: 2.0,
     allowShorts: true,        // trade impulses down as well as up
     entryThreshold: 0.0025,   // ±0.25% impulse in 1s — a genuine cascade
     takeProfit: 0.006,        // +0.60%, far enough above the ~0.18% round trip

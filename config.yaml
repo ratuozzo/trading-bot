@@ -8,17 +8,18 @@ feed:
   exchange: mexc       # mexc | bybit | okx | binance
   symbol: BTC_USDT     # single-symbol CLI bot uses this
   # The backend watches all of these at once over ONE connection.
+  #
+  # These are MEASURED, not guessed. A coin must print ~2 trades inside the
+  # lookback window or its impulse reads 0.000% forever and it can never fire.
+  # On MEXC that rules out most majors: XRP prints 0.34/s, DOGE 0.29/s,
+  # BNB 0.11/s, LTC 0.10/s. Re-measure with:
+  #     python scripts/pick_symbols.py --lookback 2
   symbols:
-    - BTC_USDT
-    - ETH_USDT
-    - SOL_USDT
-    - XRP_USDT
-    - DOGE_USDT
-    - BNB_USDT
-    - ADA_USDT
-    - LINK_USDT
-    - AVAX_USDT
-    - LTC_USDT
+    - BTC_USDT       # 5.6 trades/s, $5.5B 24h
+    - ETH_USDT       # 3.7 trades/s, $2.5B
+    - PEPE_USDT      # 2.1 trades/s, $110M
+    - HYPE_USDT      # 1.5 trades/s, $231M
+    - SOL_USDT       # 1.2 trades/s, $1.1B
   market: futures      # perps lead spot in price discovery, and are cheaper
   stream: trade        # trade/aggTrade = prints | bookTicker = top of book
                        # NOTE: Binance geo-blocks several regions (HTTP 451).
@@ -26,7 +27,10 @@ feed:
                        # scans many at once.
 
 strategy:
-  lookback_seconds: 1.0     # shorter window = stricter velocity filter
+  # 2s rather than 1s: at 1s only BTC, ETH and PEPE print often enough to be
+  # measurable on MEXC. 2s admits SOL and HYPE too, for a modest loosening of
+  # the velocity filter. Shorter = stricter but fewer tradeable coins.
+  lookback_seconds: 2.0     # shorter window = stricter velocity filter
   allow_shorts: true        # trade downward impulses as well as up
   entry_threshold: 0.0025   # ±0.25% inside the window (25bp) to enter
   take_profit: 0.006        # +0.60% — well clear of the ~18bp round trip

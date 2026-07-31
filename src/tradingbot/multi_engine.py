@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Deque, Dict, List, Optional
 
 from .brokers.base import Broker
 from .config import Config
@@ -27,6 +28,10 @@ from .strategy.momentum import MomentumScalper
 log = logging.getLogger(__name__)
 
 
+#: Window used to report a coin's trade rate, in seconds.
+RATE_WINDOW = 20.0
+
+
 @dataclass
 class SymbolState:
     """Everything the engine tracks for one coin."""
@@ -37,6 +42,29 @@ class SymbolState:
     last_tick_ts: float = 0.0
     impulse: float = 0.0
     ticks: int = 0
+    #: Recent tick timestamps, so we can report trades/sec. A coin printing
+    #: less often than the lookback window needs will show an impulse of
+    #: exactly 0.000% forever — indistinguishable from "the market is calm"
+    #: unless we surface the rate alongside it.
+    recent: Deque[float] = field(default_factory=deque)
+
+    def note_tick(self, ts: float) -> None:
+        self.recent.append(ts)
+        cutoff = ts - RATE_WINDOW
+        while self.recent and self.recent[0] < cutoff:
+            self.recent.popleft()
+
+    @property
+    def trade_rate(self) -> float:
+        """Trades per second over the recent window."""
+        if len(self.recent) < 2:
+            return 0.0
+        span = self.recent[-1] - self.recent[0]
+        return len(self.recent) / span if span > 0 else 0.0
+
+    def can_fire(self, lookback_seconds: float) -> bool:
+        """A window needs ~2 prints to measure anything at all."""
+        return self.trade_rate * lookback_seconds >= 2.0
 
 
 @dataclass
@@ -106,6 +134,7 @@ class MultiEngine:
         state.ticks += 1
         state.last_price = tick.price
         state.last_tick_ts = tick.timestamp
+        state.note_tick(tick.timestamp)
 
         pos = self.broker.position(tick.symbol)
         signal = state.strategy.on_tick(
