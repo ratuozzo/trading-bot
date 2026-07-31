@@ -121,6 +121,47 @@ an SSH tunnel or a Cloudflare Tunnel, which also gives you HTTPS.
 ssh -L 8787:127.0.0.1:8787 you@your-server   # then open localhost:8787
 ```
 
+### Where to host it for free (checked July 2026)
+
+Four constraints knock out most free tiers, and the third is specific to this
+project:
+
+1. **It must not sleep.** The bot holds WebSockets and open positions; a
+   service that idles out after 15 minutes of no HTTP traffic is useless here.
+2. **It must be a real free tier**, not a trial.
+3. **It must not be in the US or Canada.** MEXC blocks those IPs outright.
+   Using a VPN to get around that breaks MEXC's terms and can get an account
+   frozen — so this decides the region, not just the price.
+4. **Persistent disk**, or `state.json` is lost on every restart.
+
+| Option | Verdict |
+| --- | --- |
+| **Oracle Cloud Always Free** | ✅ Best fit. Genuinely always-on and permanent, and you can pick an EU region. |
+| **Hardware you already own** (Pi, old laptop) | ✅ Actually free, and it's already in the right jurisdiction. |
+| Google Cloud always-free `e2-micro` | ❌ The always-free instance is limited to US regions — MEXC blocks those. |
+| Render free | ❌ Sleeps after 15 minutes idle. |
+| Fly.io | ❌ No free tier for new accounts; trial is 2 VM-hours / 7 days. |
+| PythonAnywhere free | ❌ Outbound is whitelist-only, which blocks the exchange socket. |
+
+**Oracle caveat:** the Ampere ARM allocation was halved to 2 OCPU / 12 GB in
+June 2026 (still far more than this needs), and ARM capacity is often
+unavailable in popular regions — the AMD `E2.1.Micro` shape is usually
+obtainable and plenty.
+
+### Reaching it from your phone, for free
+
+Both good options sit behind a home router or a firewall, and your phone needs
+HTTPS to talk to them. **Cloudflare Tunnel** is free, needs no open inbound
+port, and terminates TLS for you:
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:8787
+```
+
+That prints an HTTPS URL you can open on your phone. Keep the backend bound to
+`127.0.0.1` and let the tunnel be the only way in — and still set
+`TB_API_TOKEN`, because that URL is reachable by anyone who learns it.
+
 ### Running it for real
 
 ```bash
