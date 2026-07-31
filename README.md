@@ -105,16 +105,17 @@ then publishes `web/` to GitHub Pages.
 
 **One-time setup:** in the repo, go to **Settings → Pages → Build and
 deployment → Source** and choose **GitHub Actions**. Without this the deploy
-step fails with "Pages is not enabled".
+step fails with `Get Pages site failed … verify that the repository has Pages
+enabled`.
 
-After that, pushes to `main` deploy automatically and the workflow summary
-shows the URL (typically `https://<user>.github.io/trading-bot/`). Pull
+Pushes to the default branch deploy automatically, and the workflow summary
+shows the URL — typically `https://<user>.github.io/trading-bot/`. Pull
 requests run the tests only.
 
-> **Deploying from a feature branch:** GitHub restricts the `github-pages`
-> environment to the default branch by default. If you want to deploy this
-> branch before merging, add it under **Settings → Environments →
-> github-pages → Deployment branches**. Otherwise just merge to `main`.
+> **If you later add a `main` branch** and make it the default, note that
+> GitHub restricts the `github-pages` environment to the default branch. To
+> deploy from a feature branch, add it under **Settings → Environments →
+> github-pages → Deployment branches**.
 
 Once it's live the page works on your phone like any website — add it to your
 home screen for a full-screen, app-like view.
