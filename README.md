@@ -4,14 +4,18 @@ A real-time crypto **momentum scalping bot** with a **phone-friendly live
 dashboard**. It streams tick-by-tick prices from free public exchange
 WebSockets, hunts for small short-term impulses, and paper-trades them.
 
-Two ways to run it:
+Three ways to run it:
 
 | | What it is | Where it runs |
 | --- | --- | --- |
-| **Dashboard** (`web/`) | Live UI, feed race, paper trading | Your browser / phone, deployed to GitHub Pages |
-| **Bot** (`src/tradingbot/`) | Headless engine, same strategy | Your machine / a server |
+| **Backend** (`src/tradingbot/server/`) | Always-on service: engine + API + serves the dashboard | A VPS, a Pi, Docker |
+| **Dashboard** (`web/`) | Live UI. Views the backend, or trades in-browser if there isn't one | Your browser / phone |
+| **CLI bot** (`src/tradingbot/`) | Headless single-symbol engine | A terminal |
 
-**Both are paper-trading only: no API keys, no real orders, no real money.**
+**Closing the browser only stops trading in the in-browser mode.** With the
+backend running, the engine lives in the server process and keeps going.
+
+**All three are paper-trading only: no API keys, no real orders, no real money.**
 
 > ⚠️ **Educational software, not financial advice.** Scalping small moves is
 > hard — fees and slippage eat thin edges fast, and a strategy that looks good
@@ -61,6 +65,81 @@ conservative. **Trust the ranking more than the exact milliseconds.**
 
 ---
 
+## The backend (always-on trading)
+
+Without it, the dashboard *is* the bot: close the tab and everything stops.
+The backend moves the engine into a long-running process, so the page becomes
+a viewer that can come and go.
+
+```bash
+pip install -r requirements.txt
+PYTHONPATH=src python -m tradingbot.server --autostart
+# open http://127.0.0.1:8787
+```
+
+The dashboard detects the backend automatically — same origin, no config. The
+header badge reads **SERVER** instead of **IN-BROWSER**, and Start/Stop then
+drive the service rather than the tab.
+
+### Why it serves the dashboard itself
+
+Not tidiness — necessity. A page served over HTTPS (like GitHub Pages) cannot
+open a `ws://` socket or `fetch` over `http://`; browsers block it as mixed
+content. So a Pages-hosted dashboard physically *cannot* talk to a bare-IP
+backend. Serving both from one origin sidesteps that and CORS together.
+
+The Pages deployment still works — it just falls back to trading in-browser.
+
+### API
+
+| | |
+| --- | --- |
+| `GET /api/state` | full snapshot |
+| `GET /api/stream` | WebSocket, a snapshot ~2×/second |
+| `POST /api/start` \| `/api/stop` \| `/api/reset` | control |
+| `GET \| POST /api/config` | read/update strategy and risk settings |
+| `GET /healthz` | liveness, no auth |
+
+### Security
+
+This API can start and stop trading, so **the server refuses to bind to
+anything other than loopback without `TB_API_TOKEN`**. It fails at boot rather
+than quietly exposing itself.
+
+```bash
+export TB_API_TOKEN=$(openssl rand -hex 32)
+```
+
+Pass it as `Authorization: Bearer <token>`, or `?token=…` for the WebSocket
+(browsers can't set headers on a WS handshake). Enter it once in the
+dashboard's Settings and it's remembered.
+
+Safest exposure is not to expose it: keep it on loopback and reach it through
+an SSH tunnel or a Cloudflare Tunnel, which also gives you HTTPS.
+
+```bash
+ssh -L 8787:127.0.0.1:8787 you@your-server   # then open localhost:8787
+```
+
+### Running it for real
+
+```bash
+export TB_API_TOKEN=$(openssl rand -hex 32)
+docker compose up -d
+```
+
+Or as a service — `deploy/systemd/tradingbot.service` restarts on failure and
+on boot. Put the token in `/etc/tradingbot.env`.
+
+### Session persistence
+
+State is written atomically (temp file + rename, so a crash mid-write can't
+corrupt it) and reloaded on boot: a restart resumes the same cash, trade log
+and P&L rather than silently starting a flattering fresh session. Stop/start
+from the UI also preserves it. Only `POST /api/reset` clears it.
+
+---
+
 ## The dashboard
 
 ```
@@ -94,7 +173,8 @@ More coins raises **how often** a setup appears. It does not make any
 individual trade more likely to win, and it does not change the break-even
 maths below.
 
-The headless Python bot watches **one** symbol; multi-coin is dashboard-only.
+The **backend** scans the same list server-side. Only the single-symbol CLI
+bot (`python -m tradingbot.main`) is limited to one coin.
 
 **Your phone connects straight to the exchanges.** There's no server relaying
 ticks, which is both simpler and lower-latency than proxying through the Python

@@ -33,13 +33,29 @@ class MEXCFuturesFeed(SubscribeWebSocketFeed):
     keepalive_interval = 15.0
     keepalive_payload = {"method": "ping"}
 
-    def __init__(self, symbol: str = "BTC_USDT", stream: str = "trade") -> None:
+    def __init__(self, symbol="BTC_USDT", stream: str = "trade") -> None:
+        """``symbol`` may be one contract or a list of them.
+
+        One connection carries every contract, so watching ten coins costs one
+        socket rather than ten. Ticks are tagged with their symbol, and the
+        engine routes on that.
+        """
+        if isinstance(symbol, str):
+            symbols = [symbol]
+        else:
+            symbols = list(symbol)
+        if not symbols:
+            raise ValueError("MEXCFuturesFeed needs at least one symbol")
+
         # Accept "BTCUSDT" or "btc_usdt" and normalise to MEXC's BTC_USDT.
-        self.symbol = _normalise(symbol)
+        self.symbols = [_normalise(s) for s in symbols]
+        self.symbol = self.symbols[0]   # primary, for single-symbol callers
         self.stream_type = stream
 
     def _subscribe_payload(self) -> List[Any]:
-        return [{"method": "sub.deal", "param": {"symbol": self.symbol}}]
+        return [
+            {"method": "sub.deal", "param": {"symbol": s}} for s in self.symbols
+        ]
 
     def _parse(self, msg: dict) -> Optional[Tick]:
         if msg.get("channel") != "push.deal":

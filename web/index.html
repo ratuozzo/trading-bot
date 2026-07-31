@@ -15,11 +15,13 @@
       <span class="dot" id="masterDot" data-state="idle"></span>
       <h1>Scalper</h1>
       <span class="badge">PAPER</span>
+      <span class="badge mode" id="modeBadge" title="checking…">…</span>
     </div>
     <button id="runBtn" class="run-btn">Start</button>
   </header>
 
   <main>
+    <p class="hint hidden" id="backendNote"></p>
     <!-- Live price -->
     <section class="card price-card">
       <div class="row between">
@@ -129,6 +131,13 @@
     <!-- Settings -->
     <details class="card settings">
       <summary>Settings</summary>
+
+      <div class="hidden" id="tokenRow">
+        <label>Backend token <span class="dim">— required if the server sets one</span>
+          <input type="password" id="setToken" autocomplete="off" />
+        </label>
+        <button class="mini" id="saveToken">Save token &amp; reconnect</button>
+      </div>
 
       <label>Coins <span class="dim">— comma separated, up to 20</span>
         <input type="text" id="setSymbols" inputmode="latin"

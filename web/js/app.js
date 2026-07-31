@@ -7,6 +7,7 @@ import { FEEDS, Feed, FeedRace } from './feeds.js';
 import { MomentumScalper, SIGNAL } from './strategy.js';
 import { PaperBroker, Portfolio, RiskManager, LONG, SHORT } from './broker.js';
 import { LeadLagAnalyzer, roundTripCostBp, breakEvenWinRate } from './leadlag.js';
+import { BackendClient, detectBackend, savedToken, saveToken } from './backend.js';
 
 const $ = (id) => document.getElementById(id);
 const nowMs = () => performance.timeOrigin + performance.now();
@@ -27,6 +28,10 @@ let impulse = new Map();      // symbol -> current return over the lookback
 let history = [];             // [{ts, price}] sparkline for the focused symbol
 let msgTimestamps = [];
 let focus = settings.symbols[0];   // which coin the big price card shows
+
+// When the page is served by the bot's backend, the server does the trading
+// and this becomes a viewer. Otherwise everything runs in the browser.
+let backend = null;
 
 // ---------------------------------------------------------------- session
 
@@ -472,6 +477,112 @@ function renderSpark() {
   ctx.stroke();
 }
 
+// ------------------------------------------------------- backend mode
+
+function applyServerState(st) {
+  running = !!st.running;
+  $('runBtn').textContent = running ? 'Stop' : 'Start';
+  $('runBtn').dataset.running = running ? 'true' : 'false';
+  $('masterDot').dataset.state = running ? 'live' : 'idle';
+  $('feedLabel').textContent = `${st.exchange} · server`;
+
+  const byPos = new Map((st.positions || []).map((p) => [p.symbol, p]));
+  const rows = (st.scanner || []).slice()
+    .sort((a, b) => Math.abs(b.impulse) - Math.abs(a.impulse));
+  const thr = st.strategy ? st.strategy.entry_threshold : 0;
+
+  $('scanTable').querySelector('tbody').innerHTML = rows.map((r) => {
+    const pos = byPos.get(r.symbol);
+    const armed = Math.abs(r.impulse) >= thr;
+    const cls = pos ? 'holding' : armed ? 'armed' : '';
+    const tag = pos
+      ? `<span class="side ${pos.side === 'SHORT' ? 'short' : 'long'}">${
+          pos.side === 'SHORT' ? 'S' : 'L'}</span> ${fmtSigned(pos.unrealized)}`
+      : '';
+    const short = r.symbol.replace(/_USDT$/, '');
+    return `<tr class="${cls}" data-sym="${escapeHtml(r.symbol)}">
+      <td>${r.symbol === focus ? '<b>' + escapeHtml(short) + '</b>' : escapeHtml(short)}</td>
+      <td class="r">${r.price ? fmtPrice(r.price) : '—'}</td>
+      <td class="r" style="color:${
+        r.impulse >= thr ? 'var(--up)' : r.impulse <= -thr ? 'var(--down)' : 'inherit'}">
+        ${r.impulse >= 0 ? '+' : ''}${(r.impulse * 100).toFixed(3)}%</td>
+      <td class="r">${tag}</td>
+    </tr>`;
+  }).join('');
+
+  const focused = rows.find((r) => r.symbol === focus) || rows[0];
+  if (focused) {
+    focus = focused.symbol;
+    $('symbolLabel').textContent = focused.symbol.replace(/_USDT$/, '');
+    $('price').textContent = focused.price ? fmtPrice(focused.price) : '—';
+    $('impulse').textContent =
+      `${focused.impulse >= 0 ? '+' : ''}${(focused.impulse * 100).toFixed(3)}% / ${
+        st.strategy ? st.strategy.lookback_seconds : '?'}s`;
+  }
+  $('rate').textContent = `${st.stats ? st.stats.ticks : 0} ticks`;
+
+  const open = st.positions || [];
+  $('posState').textContent = open.length ? `${open.length} open` : 'flat';
+  $('posState').classList.toggle('long', open.length > 0);
+  $('posDetail').textContent = open.length
+    ? open.map((p) => `${p.symbol.replace(/_USDT$/, '')} ${
+        p.side === 'SHORT' ? 'S' : 'L'} ${fmtSigned(p.unrealized)}`).join(' · ')
+    : (st.halted ? 'halted — daily loss limit' : `watching ${st.symbols.length} coins`);
+
+  $('equity').textContent = fmtMoney(st.equity);
+  const diff = st.equity - st.startingCash;
+  const pnlEl = $('pnl');
+  pnlEl.textContent = `${fmtSigned(diff)} (${diff >= 0 ? '+' : ''}${
+    (diff / st.startingCash * 100).toFixed(3)}%)`;
+  pnlEl.style.color = diff > 0 ? 'var(--up)' : diff < 0 ? 'var(--down)' : '';
+
+  $('nTrades').textContent = st.trades;
+  $('winRate').textContent = st.trades ? `${(st.winRate * 100).toFixed(0)}%` : '—';
+  const rEl = $('realized');
+  rEl.textContent = st.trades ? fmtSigned(st.realizedPnl) : '—';
+  rEl.style.color = st.realizedPnl > 0 ? 'var(--up)'
+    : st.realizedPnl < 0 ? 'var(--down)' : '';
+  $('haltNotice').classList.toggle('hidden', !st.halted);
+
+  const list = $('tradeList');
+  const trades = st.recentTrades || [];
+  list.innerHTML = trades.length ? trades.slice(0, 25).map((t) => {
+    const held = ((t.exitTime - t.entryTime)).toFixed(1);
+    const isShort = t.side === 'SELL';
+    return `<li>
+      <div>
+        <div class="mono"><span class="side ${isShort ? 'short' : 'long'}">${
+          isShort ? 'S' : 'L'}</span> ${escapeHtml(t.symbol.replace(/_USDT$/, ''))} ${
+          fmtPrice(t.entryPrice)} → ${fmtPrice(t.exitPrice)}</div>
+        <div class="trade-meta">held ${held}s</div>
+      </div>
+      <div class="tpnl ${t.pnl >= 0 ? 'pos' : 'neg'}">${fmtSigned(t.pnl)}
+        <div class="trade-meta">${t.returnPct >= 0 ? '+' : ''}${
+          (t.returnPct * 100).toFixed(3)}%</div></div>
+    </li>`;
+  }).join('') : '<li class="empty">No trades yet.</li>';
+
+  // Break-even uses the server's numbers, not the browser's settings.
+  if (st.strategy && st.fees) {
+    const be = breakEvenWinRate(
+      { takeProfit: st.strategy.take_profit, stopLoss: st.strategy.stop_loss },
+      { feeBps: st.fees.feeBps, slippageBps: st.fees.slippageBps },
+    );
+    const el = $('breakeven');
+    if (be.required === Infinity) {
+      el.textContent = 'Take-profit does not cover costs — every win still loses money.';
+      el.className = 'hint verdict-bad';
+    } else {
+      const pct = be.required * 100;
+      el.textContent = `Costs ${be.costBp.toFixed(1)}bp per round trip: a win nets ` +
+        `+${be.netWinBp.toFixed(1)}bp, a loss costs −${be.netLossBp.toFixed(1)}bp, ` +
+        `so this setup needs a ${pct.toFixed(0)}% win rate to break even.`;
+      el.className = pct >= 75 ? 'hint verdict-bad'
+        : pct >= 55 ? 'hint verdict-warn' : 'hint verdict-good';
+    }
+  }
+}
+
 // ---------------------------------------------------------------- format
 
 function fmtPrice(p) {
@@ -601,11 +712,21 @@ function parseSymbols(raw) {
 
 // ---------------------------------------------------------------- boot
 
-$('runBtn').addEventListener('click', () => (running ? stop() : start()));
+$('runBtn').addEventListener('click', () => {
+  if (backend) {
+    // The server owns the engine; we only ask.
+    (running ? backend.stop() : backend.start());
+    return;
+  }
+  running ? stop() : start();
+});
 
 // Mobile browsers suspend sockets in background tabs; reconnect on return.
+// In backend mode this only restores the *view* — the bot never stopped.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && running) {
+  if (document.visibilityState !== 'visible') return;
+  if (backend) { backend.connect(); return; }
+  if (running) {
     const stale = feeds.some((f) => !f.ws || f.ws.readyState !== WebSocket.OPEN);
     if (stale) start();
   }
@@ -629,13 +750,74 @@ renderScanner();
 renderRace();
 renderLeadLag();
 
+// If a backend is serving this page, hand trading over to it.
+(async () => {
+  if (!(await detectBackend())) {
+    $('modeBadge').textContent = 'IN-BROWSER';
+    $('modeBadge').title =
+      'No backend detected — the strategy runs in this tab and stops when you close it.';
+    return;
+  }
+
+  // Stop the browser-side loops; the server is authoritative now.
+  clearInterval(browserRenderTimer);
+  clearInterval(browserSparkTimer);
+  clearInterval(browserLeadLagTimer);
+  stopFeeds();
+
+  $('modeBadge').textContent = 'SERVER';
+  $('modeBadge').title = 'Trading runs on the backend and continues when this page is closed.';
+  document.body.classList.add('backend-mode');
+
+  backend = new BackendClient({
+    onState: applyServerState,
+    onStatus: (state, detail) => {
+      $('masterDot').dataset.state = state === 'live' ? 'live' : 'connecting';
+      if (state === 'unauthorised' || detail) {
+        $('backendNote').textContent = detail || 'unauthorised — check the token';
+        $('backendNote').classList.remove('hidden');
+      } else {
+        $('backendNote').classList.add('hidden');
+      }
+    },
+  });
+
+  $('tokenRow').classList.remove('hidden');
+  $('setToken').value = savedToken();
+  $('saveToken').addEventListener('click', () => {
+    saveToken($('setToken').value.trim());
+    backend.token = $('setToken').value.trim();
+    backend.disconnect();
+    backend.connect();
+  });
+
+  // Settings now write through to the server.
+  $('applyBtn').addEventListener('click', () => {
+    readSettingsUI();
+    backend.setConfig({
+      symbols: settings.symbols,
+      strategy: {
+        lookback_seconds: settings.strategy.lookbackSeconds,
+        allow_shorts: settings.strategy.allowShorts,
+        entry_threshold: settings.strategy.entryThreshold,
+        take_profit: settings.strategy.takeProfit,
+        stop_loss: settings.strategy.stopLoss,
+      },
+      risk: { max_concurrent_positions: settings.risk.maxConcurrentPositions },
+    });
+  }, true);
+  $('resetBtn').addEventListener('click', () => backend.reset(), true);
+
+  backend.connect();
+})();
+
 // One render loop keeps the UI smooth no matter how fast ticks arrive —
 // rendering per-tick would melt the phone at 100+ msg/s.
-setInterval(() => {
+const browserRenderTimer = setInterval(() => {
   renderPrice();
   renderPosition();
   renderScanner();
   renderRace();
 }, 250);
-setInterval(renderSpark, 500);
-setInterval(renderLeadLag, 1000);
+const browserSparkTimer = setInterval(renderSpark, 500);
+const browserLeadLagTimer = setInterval(renderLeadLag, 1000);

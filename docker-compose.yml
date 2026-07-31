@@ -1,0 +1,18 @@
+# docker compose up -d
+#
+# TB_API_TOKEN is mandatory: the container binds 0.0.0.0 and this API can
+# start and stop trading. Generate one with:  openssl rand -hex 32
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8787:8787"   # loopback on the host; front it with a tunnel
+    environment:
+      TB_API_TOKEN: "${TB_API_TOKEN:?set TB_API_TOKEN, e.g. openssl rand -hex 32}"
+      TB_MODE: paper
+    volumes:
+      - bot-state:/data
+
+volumes:
+  bot-state:

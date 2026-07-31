@@ -6,7 +6,19 @@
 
 feed:
   exchange: mexc       # mexc | bybit | okx | binance
-  symbol: BTC_USDT     # mexc: BTC_USDT · bybit: BTCUSDT · okx: BTC-USDT-SWAP
+  symbol: BTC_USDT     # single-symbol CLI bot uses this
+  # The backend watches all of these at once over ONE connection.
+  symbols:
+    - BTC_USDT
+    - ETH_USDT
+    - SOL_USDT
+    - XRP_USDT
+    - DOGE_USDT
+    - BNB_USDT
+    - ADA_USDT
+    - LINK_USDT
+    - AVAX_USDT
+    - LTC_USDT
   market: futures      # perps lead spot in price discovery, and are cheaper
   stream: trade        # trade/aggTrade = prints | bookTicker = top of book
                        # NOTE: Binance geo-blocks several regions (HTTP 451).
@@ -25,7 +37,11 @@ strategy:
   cooldown_seconds: 3.0     # wait after an exit before re-entering
 
 risk:
-  order_size_pct: 0.95       # fraction of available cash per entry
+  # Many coins share one book. order_size_pct must leave room for the other
+  # positions: at 0.95 the first entry takes almost everything and the cap
+  # below becomes meaningless, because nothing is left to open with.
+  max_concurrent_positions: 3
+  order_size_pct: 0.30       # fraction of available cash per entry
   min_notional: 10.0         # skip orders smaller than this
   daily_loss_limit_pct: 0.05 # halt after -5% on the day
 
@@ -36,3 +52,12 @@ broker:
   # 0%/0.01% shown in the MEXC app does NOT apply to API orders.
   fee_bps: 8.0
   slippage_bps: 2.0          # assumed slippage per fill
+
+server:
+  # The backend runs the engine independently of any browser. Loopback by
+  # default; binding to a public address REQUIRES TB_API_TOKEN, because this
+  # API can start and stop trading.
+  host: 127.0.0.1
+  port: 8787
+  autostart: false           # start trading the moment the process boots
+  state_file: state.json     # session survives a restart

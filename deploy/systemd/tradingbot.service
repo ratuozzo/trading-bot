@@ -1,0 +1,25 @@
+[Unit]
+Description=Crypto momentum scalping bot (paper)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tradingbot
+WorkingDirectory=/opt/trading-bot
+Environment=PYTHONPATH=/opt/trading-bot/src
+Environment=TB_STATE_FILE=/var/lib/tradingbot/state.json
+EnvironmentFile=/etc/tradingbot.env
+ExecStart=/opt/trading-bot/.venv/bin/python -m tradingbot.server
+Restart=always
+RestartSec=5
+
+# The bot needs nothing beyond its own state directory.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+StateDirectory=tradingbot
+
+[Install]
+WantedBy=multi-user.target

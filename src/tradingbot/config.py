@@ -18,9 +18,26 @@ except ImportError:  # pragma: no cover - yaml is a declared dependency
 
 
 @dataclass
+class ServerConfig:
+    """Backend settings. The token is required for anything that changes
+    state; without one the server refuses to bind to a public interface."""
+
+    host: str = "127.0.0.1"
+    port: int = 8787
+    token: str = ""              # set via TB_API_TOKEN
+    autostart: bool = False      # begin trading as soon as the process boots
+    state_file: str = "state.json"
+
+
+@dataclass
 class FeedConfig:
     exchange: str = "mexc"         # mexc | bybit | okx | binance
     symbol: str = "BTC_USDT"       # venue symbol (MEXC uses BTC_USDT)
+    # The backend watches all of these at once over one connection.
+    symbols: list = field(default_factory=lambda: [
+        "BTC_USDT", "ETH_USDT", "SOL_USDT", "XRP_USDT", "DOGE_USDT",
+        "BNB_USDT", "ADA_USDT", "LINK_USDT", "AVAX_USDT", "LTC_USDT",
+    ])
     stream: str = "trade"          # "trade"/"aggTrade" (prints) or "bookTicker"
     market: str = "futures"        # "futures" (perps lead spot) or "spot"
 
@@ -42,7 +59,9 @@ class StrategyConfig:
 
 @dataclass
 class RiskConfig:
-    order_size_pct: float = 0.95       # fraction of available cash per entry
+    # Many coins share one book, so no single entry may hog the cash.
+    max_concurrent_positions: int = 3
+    order_size_pct: float = 0.30       # fraction of available cash per entry
     min_notional: float = 10.0         # skip orders smaller than this (quote ccy)
     daily_loss_limit_pct: float = 0.05 # stop trading after -5% on the day
 
@@ -64,6 +83,7 @@ class Config:
     strategy: StrategyConfig = field(default_factory=StrategyConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
     broker: BrokerConfig = field(default_factory=BrokerConfig)
+    server: ServerConfig = field(default_factory=ServerConfig)
 
     @classmethod
     def load(cls, path: str = "config.yaml") -> "Config":
@@ -82,6 +102,7 @@ class Config:
             strategy=_build(StrategyConfig, data.get("strategy", {})),
             risk=_build(RiskConfig, data.get("risk", {})),
             broker=_build(BrokerConfig, data.get("broker", {})),
+            server=_build(ServerConfig, data.get("server", {})),
         )
         _apply_env_overrides(cfg)
         return cfg
@@ -108,6 +129,11 @@ _ENV_MAP = {
     "TB_TAKE_PROFIT": ("strategy", "take_profit", float),
     "TB_STOP_LOSS": ("strategy", "stop_loss", float),
     "TB_ORDER_SIZE_PCT": ("risk", "order_size_pct", float),
+    "TB_MAX_POSITIONS": ("risk", "max_concurrent_positions", int),
+    "TB_HOST": ("server", "host", str),
+    "TB_PORT": ("server", "port", int),
+    "TB_API_TOKEN": ("server", "token", str),
+    "TB_STATE_FILE": ("server", "state_file", str),
 }
 
 

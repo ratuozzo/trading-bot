@@ -3,75 +3,84 @@
 Records completed round-trip trades and exposes running statistics so you can
 judge whether the strategy is actually working. Kept independent of the broker
 so it can be tested in isolation.
+
+Open legs are tracked per symbol: watching ten coins means up to ten positions
+in flight, and a single open-leg field would cross their fills over.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from .models import Fill, Side, Trade
+
+
+@dataclass
+class _OpenLeg:
+    side: Side
+    quantity: float
+    price: float
+    timestamp: float
+    fee: float
 
 
 @dataclass
 class Portfolio:
     starting_cash: float
     trades: List[Trade] = field(default_factory=list)
-    # Details of the currently open entry, if any.
-    _open_qty: float = 0.0
-    _open_price: float = 0.0
-    _open_time: float = 0.0
-    _open_fees: float = 0.0
-    _open_side: Side = Side.BUY   # BUY = long, SELL = short
+    _open: Dict[str, _OpenLeg] = field(default_factory=dict)
 
     def record_fill(self, fill: Fill, opening: Optional[bool] = None) -> Optional[Trade]:
         """Update state with a fill; returns a completed Trade on the close.
 
         ``opening`` says whether this fill opens or closes a position. When
-        omitted it is inferred: flat means the fill opens, otherwise it closes.
-        That inference matters now that a position can be opened with a SELL
-        (a short), so side alone no longer tells us the direction of travel.
+        omitted it is inferred: no open leg for that symbol means the fill
+        opens one. That inference matters now that a position can be opened
+        with a SELL (a short), so side alone no longer says which way we are
+        travelling.
         """
+        symbol = fill.symbol
         if opening is None:
-            opening = self._open_qty <= 0
+            opening = symbol not in self._open
 
         if opening:
-            self._open_side = fill.side
-            self._open_qty = fill.quantity
-            self._open_price = fill.price
-            self._open_time = fill.timestamp
-            self._open_fees = fill.fee
+            self._open[symbol] = _OpenLeg(
+                side=fill.side,
+                quantity=fill.quantity,
+                price=fill.price,
+                timestamp=fill.timestamp,
+                fee=fill.fee,
+            )
             return None
 
-        if self._open_qty <= 0:
+        leg = self._open.get(symbol)
+        if leg is None:
             return None
-        qty = min(fill.quantity, self._open_qty)
-        direction = -1 if self._open_side is Side.SELL else 1
-        gross = direction * (fill.price - self._open_price) * qty
-        entry_fee_share = self._open_fees * (qty / self._open_qty)
+
+        qty = min(fill.quantity, leg.quantity)
+        direction = -1 if leg.side is Side.SELL else 1
+        gross = direction * (fill.price - leg.price) * qty
+        entry_fee_share = leg.fee * (qty / leg.quantity) if leg.quantity else 0.0
         fees = entry_fee_share + fill.fee
 
         trade = Trade(
-            symbol=fill.symbol,
+            symbol=symbol,
             quantity=qty,
-            entry_price=self._open_price,
+            entry_price=leg.price,
             exit_price=fill.price,
-            entry_time=self._open_time,
+            entry_time=leg.timestamp,
             exit_time=fill.timestamp,
             fees=fees,
             pnl=gross - fees,
-            side=self._open_side,
+            side=leg.side,
         )
         self.trades.append(trade)
 
-        self._open_qty -= qty
-        self._open_fees -= entry_fee_share
-        if self._open_qty <= 1e-12:
-            self._open_qty = 0.0
-            self._open_price = 0.0
-            self._open_time = 0.0
-            self._open_fees = 0.0
-            self._open_side = Side.BUY
+        leg.quantity -= qty
+        leg.fee -= entry_fee_share
+        if leg.quantity <= 1e-12:
+            del self._open[symbol]
         return trade
 
     # -- stats -------------------------------------------------------------
@@ -91,6 +100,18 @@ class Portfolio:
     @property
     def win_rate(self) -> float:
         return self.wins / self.num_trades if self.trades else 0.0
+
+    def by_symbol(self) -> List[dict]:
+        """Per-symbol results, so you can see which coins actually work."""
+        out: Dict[str, dict] = {}
+        for t in self.trades:
+            e = out.setdefault(
+                t.symbol, {"symbol": t.symbol, "trades": 0, "wins": 0, "pnl": 0.0}
+            )
+            e["trades"] += 1
+            e["wins"] += 1 if t.pnl > 0 else 0
+            e["pnl"] += t.pnl
+        return sorted(out.values(), key=lambda e: e["pnl"], reverse=True)
 
     def summary(self) -> str:
         if not self.trades:

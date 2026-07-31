@@ -20,9 +20,16 @@ class RiskManager:
     def halted(self) -> bool:
         return self._halted
 
-    def order_notional(self, available_cash: float) -> float:
-        """Quote-currency amount to spend on an entry (0 to skip)."""
+    def order_notional(self, available_cash: float, open_count: int = 0) -> float:
+        """Quote-currency amount to spend on an entry (0 to skip).
+
+        ``open_count`` caps how many coins can be held at once. Without it the
+        first signal of the session would swallow all the cash and the other
+        symbols would never get a turn.
+        """
         if self._halted:
+            return 0.0
+        if open_count >= self.cfg.max_concurrent_positions:
             return 0.0
         notional = available_cash * self.cfg.order_size_pct
         if notional < self.cfg.min_notional:
