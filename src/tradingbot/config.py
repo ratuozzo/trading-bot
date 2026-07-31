@@ -19,9 +19,9 @@ except ImportError:  # pragma: no cover - yaml is a declared dependency
 
 @dataclass
 class FeedConfig:
-    exchange: str = "binance"      # binance | bybit | okx
-    symbol: str = "btcusdt"        # venue symbol (binance lowercases, others upper)
-    stream: str = "aggTrade"       # "trade"/"aggTrade" (prints) or "bookTicker" (bid/ask)
+    exchange: str = "mexc"         # mexc | bybit | okx | binance
+    symbol: str = "BTC_USDT"       # venue symbol (MEXC uses BTC_USDT)
+    stream: str = "trade"          # "trade"/"aggTrade" (prints) or "bookTicker"
     market: str = "futures"        # "futures" (perps lead spot) or "spot"
 
 
@@ -29,15 +29,15 @@ class FeedConfig:
 class StrategyConfig:
     # Shorter lookback = stricter velocity filter: the same threshold has to
     # happen faster. Sub-second values are fine, and are where cascades live.
-    lookback_seconds: float = 5.0      # window used to measure the impulse
+    lookback_seconds: float = 1.0      # window used to measure the impulse
     allow_shorts: bool = True          # trade downward impulses as well as up
-    entry_threshold: float = 0.0015    # ±0.15% over the window triggers entry
-    take_profit: float = 0.002         # exit at +0.20%
-    stop_loss: float = 0.0015          # exit at -0.15%
-    reversal_exit: float = 0.0008      # exit if momentum flips by 0.08% quickly
-    reversal_window: float = 1.5       # window (s) used to detect a reversal
-    max_hold_seconds: float = 60.0     # give up on a stalled position
-    cooldown_seconds: float = 2.0      # wait after an exit before re-entering
+    entry_threshold: float = 0.0025    # ±0.25% over the window triggers entry
+    take_profit: float = 0.006         # exit at +0.60% (clears ~18bp costs)
+    stop_loss: float = 0.0025          # exit at -0.25%
+    reversal_exit: float = 0.0015      # exit if momentum flips by 0.15% quickly
+    reversal_window: float = 1.0       # window (s) used to detect a reversal
+    max_hold_seconds: float = 45.0     # give up on a stalled position
+    cooldown_seconds: float = 3.0      # wait after an exit before re-entering
 
 
 @dataclass
@@ -51,7 +51,7 @@ class RiskConfig:
 class BrokerConfig:
     mode: str = "paper"                # "paper" or "live"
     starting_cash: float = 10_000.0    # paper starting balance (quote currency)
-    fee_bps: float = 10.0              # taker fee in basis points (0.10%)
+    fee_bps: float = 8.0               # MEXC futures via API: 0.08% taker
     slippage_bps: float = 2.0          # assumed slippage per fill
     # Live-only (loaded from env, never commit these):
     api_key: str = ""

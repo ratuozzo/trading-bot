@@ -34,6 +34,22 @@
       <div class="spark"><canvas id="spark" height="48"></canvas></div>
     </section>
 
+    <!-- Scanner -->
+    <section class="card">
+      <div class="label">Scanner <span class="dim">— tap a coin to focus it</span></div>
+      <table class="feeds scan" id="scanTable">
+        <thead>
+          <tr><th>Coin</th><th class="r">Price</th><th class="r">Impulse</th><th class="r">Pos</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p class="hint">
+        Sorted by how close each coin is to firing. More coins means more
+        chances to catch a setup — it does not make any single trade more
+        likely to win.
+      </p>
+    </section>
+
     <!-- Position + equity -->
     <div class="grid2">
       <section class="card">
@@ -114,11 +130,13 @@
     <details class="card settings">
       <summary>Settings</summary>
 
-      <label>Asset
-        <select id="setBase">
-          <option>BTC</option><option>ETH</option><option>SOL</option>
-          <option>XRP</option><option>DOGE</option>
-        </select>
+      <label>Coins <span class="dim">— comma separated, up to 20</span>
+        <input type="text" id="setSymbols" inputmode="latin"
+               autocapitalize="characters" autocomplete="off" />
+      </label>
+
+      <label>Max positions at once
+        <input type="number" id="setMaxPos" step="1" min="1" />
       </label>
 
       <label>Signal feed <span class="dim">— drives decisions (fastest venue)</span>
@@ -165,10 +183,11 @@
       </div>
 
       <p class="hint">
-        Round-trip cost is 2× fee + 2× slippage. If take-profit doesn't clearly
-        beat that, the strategy loses money even when it's right. Binance spot
-        taker is 10bp (7.5bp with BNB); perps are cheaper — set the fee to match
-        wherever the execution feed points.
+        A <b>bp</b> (basis point) is 1/100th of a percent: 100bp = 1%, so
+        0.20% = 20bp. Round-trip cost is 2× fee + 2× slippage. If take-profit
+        doesn't clearly beat that, the strategy loses money even when it's
+        right. MEXC futures placed through the API cost 8bp per side — the
+        0%/0.01% shown in the MEXC app does <b>not</b> apply to API orders.
       </p>
     </details>
 

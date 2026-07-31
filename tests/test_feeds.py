@@ -157,3 +157,54 @@ def test_garbage_messages_are_ignored(feed):
     junk = {"unrelated": "payload"}
     parsed = feed._parse(json.dumps(junk) if isinstance(feed, BinanceWebSocketFeed) else junk)
     assert parsed is None
+
+
+# -- MEXC futures ----------------------------------------------------------
+
+def test_mexc_url_and_subscribe_shape():
+    from tradingbot.feeds import MEXCFuturesFeed
+    f = MEXCFuturesFeed("BTC_USDT")
+    assert f.url == "wss://contract.mexc.com/edge"
+    assert f._subscribe_payload() == [
+        {"method": "sub.deal", "param": {"symbol": "BTC_USDT"}}
+    ]
+    # MEXC drops idle sockets at 60s; we ping well inside that.
+    assert f.keepalive_interval <= 20
+    assert f.keepalive_payload == {"method": "ping"}
+
+
+@pytest.mark.parametrize(
+    "given,expected",
+    [("BTCUSDT", "BTC_USDT"), ("btc_usdt", "BTC_USDT"),
+     ("ETHUSDT", "ETH_USDT"), ("SOL_USDT", "SOL_USDT")],
+)
+def test_mexc_symbol_normalisation(given, expected):
+    from tradingbot.feeds import MEXCFuturesFeed
+    assert MEXCFuturesFeed(given).symbol == expected
+
+
+def test_mexc_push_deal_parse():
+    from tradingbot.feeds import MEXCFuturesFeed
+    f = MEXCFuturesFeed("BTC_USDT")
+    tick = f._parse({
+        "channel": "push.deal",
+        "data": {"p": 43210.5, "v": 12, "T": 1, "t": 1700000000500},
+        "symbol": "BTC_USDT",
+        "ts": 1700000000600,
+    })
+    assert tick.price == 43210.5
+    assert tick.quantity == 12
+    assert tick.timestamp == pytest.approx(1700000000.5)
+
+
+def test_mexc_ignores_other_channels():
+    from tradingbot.feeds import MEXCFuturesFeed
+    f = MEXCFuturesFeed("BTC_USDT")
+    assert f._parse({"channel": "pong", "data": 1700000000}) is None
+    assert f._parse({"channel": "rs.error", "data": "symbol not exist"}) is None
+    assert f._parse({"channel": "push.deal"}) is None
+
+
+def test_factory_builds_mexc_by_default():
+    from tradingbot.feeds import MEXCFuturesFeed
+    assert isinstance(build_feed(FeedConfig()), MEXCFuturesFeed)

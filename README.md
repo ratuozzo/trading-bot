@@ -75,13 +75,26 @@ web/
     └── config.js    # defaults, mirrors config.yaml
 ```
 
-Feeds available: Binance perp, Binance spot, Bybit perp, OKX swap,
-Hyperliquid, Coinbase.
+Feeds available: **MEXC perp** (default), Bybit perp, OKX swap, Hyperliquid,
+plus Binance perp/spot — note Binance geo-blocks several regions and will fail
+to connect from them.
 
-It shows the live price and impulse, a 60s sparkline, the feed race table, your
-position and equity, session stats, and a trade log — plus settings for asset,
-which feed to trade, which to race, and the strategy thresholds. Settings
-persist in `localStorage`.
+It shows the live price and impulse, a 60s sparkline, a **scanner** covering
+every watched coin, the feed race table, your positions and equity, session
+stats, and a trade log. Settings persist in `localStorage`.
+
+**Watching many coins.** The dashboard scans up to 20 symbols at once (10 by
+default) over a single WebSocket per venue, each with its own independent
+strategy state, all sharing one book of cash. `Max positions at once` caps how
+many can be held simultaneously — without it the first signal of the session
+would swallow all the capital and the other nine coins would never get a turn.
+Tap any row in the scanner to focus that coin in the big price card.
+
+More coins raises **how often** a setup appears. It does not make any
+individual trade more likely to win, and it does not change the break-even
+maths below.
+
+The headless Python bot watches **one** symbol; multi-coin is dashboard-only.
 
 **Your phone connects straight to the exchanges.** There's no server relaying
 ticks, which is both simpler and lower-latency than proxying through the Python
@@ -128,10 +141,10 @@ home screen for a full-screen, app-like view.
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-python -m tradingbot.main                          # Binance perps, BTC
+python -m tradingbot.main                          # MEXC perps, BTC_USDT
 python -m tradingbot.main --exchange okx --symbol BTC-USDT-SWAP
 python -m tradingbot.main --exchange bybit --symbol ETHUSDT --stream bookTicker
-python -m tradingbot.main --market spot --stream trade
+python -m tradingbot.main --exchange mexc --symbol ETH_USDT
 ```
 
 > If the package isn't found, run from the repo root with
@@ -144,13 +157,34 @@ Exchange WS ──► Feed ──► Strategy ──► Risk ──► Broker �
  (free, live)   Tick     Signal      sizing    fills      PnL
 ```
 
-- **Feeds** — Binance (spot + USD-M futures), Bybit v5, OKX v5. All auto-reconnect.
-- **Strategy** — measures return over a lookback window; goes long on a strong
-  upward impulse; exits on take-profit, stop-loss, momentum reversal, or max hold.
+- **Feeds** — MEXC contract, Bybit v5, OKX v5, Binance (spot + USD-M futures).
+  All auto-reconnect.
+- **Strategy** — measures return over a lookback window; enters **long on an
+  upward impulse and short on a downward one**; exits on take-profit,
+  stop-loss, momentum reversal, or max hold.
 - **Risk** — position sizing plus a daily loss limit that halts trading.
 - **Broker** — `PaperBroker` simulates fills with fees and slippage.
   `binance_live.py` is a deliberate stub where real execution would go.
 - **Portfolio** — round-trip trade log, win rate, PnL.
+
+### On "defaults that are always profitable"
+
+There is no such setting, and it is worth being plain about why rather than
+shipping something that looks like one. Parameters decide **what you risk and
+what you need**; the market decides whether you get it. What defaults *can* do
+is make sure a winning trade is actually a win after costs — the old ones
+failed even that test.
+
+The defaults are now tuned so the break-even bar is about a **51% win rate**:
+take-profit 0.60%, stop-loss 0.25%, on a ~18bp round trip. The strategy has to
+be slightly better than a coin flip. Under the previous 0.20%/0.15% settings at
+these fees, the bar was ~94% — unreachable.
+
+The tension no setting escapes: fees push you toward bigger targets, and bigger
+targets get hit less often. Widening take-profit lowers the bar you must clear
+and simultaneously lowers how often you clear it. The dashboard shows the
+break-even number live so you can see that trade-off as you tune, and the
+session's actual win rate next to it so you can see whether you are beating it.
 
 ### Configuration
 
@@ -160,7 +194,7 @@ Copy `.env.example` to `.env` for local overrides — it's git-ignored.
 
 | Setting | Meaning |
 | --- | --- |
-| `feed.exchange` | `binance`, `bybit`, or `okx` |
+| `feed.exchange` | `mexc` (default), `bybit`, `okx`, or `binance` |
 | `feed.market` | `futures` (perps, faster) or `spot` |
 | `feed.stream` | `trade`/`aggTrade` (prints) or `bookTicker` (top of book) |
 | `strategy.entry_threshold` | Impulse size that triggers a buy (0.0015 = 0.15%) |
@@ -174,6 +208,12 @@ calls are right*. At Binance spot's 10bp taker, the default 0.20% take-profit
 nets **−2bp on a winning trade** — you would grind the account down while the
 win-rate display reads 100%.
 
+### What is a "bp"?
+
+A **basis point** is 1/100th of a percent. 100bp = 1%, 10bp = 0.10%, 1bp =
+0.01%. Fees and small price moves are quoted this way because saying "0.08%"
+repeatedly gets unwieldy. A 0.60% take-profit is 60bp.
+
 ### Venue fee reality (checked July 2026)
 
 All figures are **taker** rates, because an impulse strategy has to cross the
@@ -186,6 +226,11 @@ spread. Re-check your own account's fee page — these move.
 | Binance spot + BNB discount | 0.075% | 15 bp |
 | MEXC futures **via API** | 0.08% | 16 bp |
 | Binance spot | 0.10% | 20 bp |
+
+**MEXC is the default venue** because Binance geo-blocks a number of
+jurisdictions outright — its API answers `HTTP 451, "restricted location"` —
+so a Binance row will simply never populate from those places. The dashboard
+now says so in the feed table instead of leaving a silent blank row.
 
 **The MEXC trap.** MEXC advertises 0% maker and near-zero futures fees, and
 that is real — for manual web/app trading. Orders sent through the **API are

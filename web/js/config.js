@@ -2,46 +2,61 @@
 // These mirror `config.yaml` on the Python side — if you tune one, tune both.
 
 export const DEFAULTS = {
-  base: 'BTC',              // base asset; each feed maps it to its own symbol
+  // Coins watched simultaneously. More coins means more chances to catch an
+  // impulse — it does not improve any individual trade's odds, it just raises
+  // how often a setup appears.
+  symbols: ['BTC', 'ETH', 'SOL', 'XRP', 'DOGE', 'BNB', 'ADA', 'LINK', 'AVAX', 'LTC'],
 
   // signalFeed drives the decisions; execFeed is where the (simulated) fills
-  // happen. Set them to the same venue for plain single-venue momentum, or to
-  // different ones to trade a lead-lag idea (fast perp signal -> spot fills).
-  signalFeed: 'binance-futures',
-  execFeed: 'binance-spot',
-  racing: ['binance-futures', 'bybit', 'okx', 'binance-spot'],
+  // happen. Same venue for plain momentum; different ones for a lead-lag idea.
+  signalFeed: 'mexc-futures',
+  execFeed: 'mexc-futures',
+  racing: ['mexc-futures', 'bybit', 'okx'],
 
   leadlag: {
     thresholdBp: 3,     // signal move that counts as an event
     windowMs: 500,      // ...measured over this window
   },
 
+  // These defaults are chosen so a winning trade is actually a win after
+  // costs — NOT because they guarantee a profit. Nothing can do that.
+  //
+  // At an 8bp taker fee the round trip costs ~18bp. Take-profit sits well
+  // clear of it and the stop is kept tight, which puts break-even at roughly
+  // a 51% win rate: the strategy has to be a little better than a coin flip.
+  // The old 0.20%/0.15% settings needed ~94% at these fees, i.e. never.
+  //
+  // There is a real tension here and no setting escapes it: fees push you
+  // toward bigger targets, and bigger targets get hit less often. Widening
+  // take-profit lowers the bar but also lowers how often you clear it.
   strategy: {
     // Shorter lookback = a stricter velocity filter: the same threshold has to
-    // happen faster. Sub-second values are fine and are where cascades live.
-    lookbackSeconds: 5.0,
+    // happen faster. Sub-second values are where cascades live.
+    lookbackSeconds: 1.0,
     allowShorts: true,        // trade impulses down as well as up
-    entryThreshold: 0.0015,   // ±0.15% impulse to enter
-    takeProfit: 0.002,        // +0.20%
-    stopLoss: 0.0015,         // -0.15%
-    reversalExit: 0.0008,     // bail on a -0.08% flip
-    reversalWindow: 1.5,
-    maxHoldSeconds: 60,
-    cooldownSeconds: 2,
+    entryThreshold: 0.0025,   // ±0.25% impulse in 1s — a genuine cascade
+    takeProfit: 0.006,        // +0.60%, far enough above the ~0.18% round trip
+    stopLoss: 0.0025,         // -0.25%, cut fast
+    reversalExit: 0.0015,     // bail if momentum flips 0.15%
+    reversalWindow: 1.0,
+    maxHoldSeconds: 45,
+    cooldownSeconds: 3,
   },
 
   risk: {
-    orderSizePct: 0.95,
+    // Ten coins share the book, so no single entry may hog the cash.
+    maxConcurrentPositions: 3,
+    orderSizePct: 0.30,
     minNotional: 10,
     dailyLossLimitPct: 0.05,
   },
 
   broker: {
     startingCash: 10000,
-    // Binance SPOT taker is 0.10% (7.5bp with the BNB discount). Perps are
-    // cheaper. This must match wherever execFeed points, or the simulated
-    // results will flatter the strategy.
-    feeBps: 10.0,
+    // MEXC futures placed through the API: 0.08% taker as of Jun 2026. The
+    // 0%/0.01% shown in the MEXC app does NOT apply to API orders. This must
+    // match your real venue or the results will flatter the strategy.
+    feeBps: 8.0,
     slippageBps: 2.0,
   },
 };
@@ -62,10 +77,10 @@ export const DEFAULTS = {
  * misses the move or fills because the move reversed.
  */
 export const FEE_PRESETS = [
+  { id: 'mexc-api-futures', label: 'MEXC futures via API', bps: 8.0 },
+  { id: 'mexc-api-futures-mx', label: 'MEXC futures API + MX (20% off)', bps: 6.4 },
   { id: 'binance-perp', label: 'Binance USD-M perp taker', bps: 5.0 },
   { id: 'mexc-spot', label: 'MEXC spot taker', bps: 5.0 },
-  { id: 'binance-spot-bnb', label: 'Binance spot taker + BNB', bps: 7.5 },
-  { id: 'mexc-api-futures', label: 'MEXC futures via API', bps: 8.0 },
   { id: 'binance-spot', label: 'Binance spot taker', bps: 10.0 },
   { id: 'custom', label: 'Custom', bps: null },
 ];

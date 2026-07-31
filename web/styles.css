@@ -261,3 +261,14 @@ legend { font-size: 12px; color: var(--dim); font-weight: 600; padding: 0 0 6px;
   }
   .topbar { background: rgba(245, 247, 251, .92); }
 }
+
+/* ---------- scanner ---------- */
+.scan tbody tr { cursor: pointer; }
+.scan tr.armed td { color: var(--warn); }
+.scan tr.holding td { color: var(--fg); background: rgba(91,157,255,.07); }
+.scan td:first-child { font-weight: 600; }
+
+.feed-note {
+  font-size: 10.5px; color: var(--warn); margin-top: 2px;
+  line-height: 1.35; max-width: 24ch;
+}

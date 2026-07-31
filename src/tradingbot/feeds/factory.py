@@ -6,11 +6,14 @@ from ..config import FeedConfig
 from .base import PriceFeed
 from .binance import BinanceWebSocketFeed
 from .bybit import BybitFeed
+from .mexc import MEXCFuturesFeed
 from .okx import OKXFeed
 
 
 def build_feed(cfg: FeedConfig) -> PriceFeed:
     exchange = cfg.exchange.lower()
+    if exchange in ("mexc", "mexc-futures"):
+        return MEXCFuturesFeed(symbol=cfg.symbol, stream=cfg.stream)
     if exchange == "binance":
         return BinanceWebSocketFeed(
             symbol=cfg.symbol, stream=cfg.stream, market=cfg.market
@@ -20,5 +23,5 @@ def build_feed(cfg: FeedConfig) -> PriceFeed:
     if exchange == "okx":
         return OKXFeed(symbol=cfg.symbol, stream=cfg.stream)
     raise ValueError(
-        f"Unknown exchange {cfg.exchange!r}. Supported: binance, bybit, okx."
+        f"Unknown exchange {cfg.exchange!r}. Supported: mexc, binance, bybit, okx."
     )

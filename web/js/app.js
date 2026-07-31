@@ -13,14 +13,20 @@ const nowMs = () => performance.timeOrigin + performance.now();
 
 let settings = loadSettings();
 let feeds = [];
-let race = new FeedRace();
+let race = new FeedRace(settings.symbols[0]);
 let leadlag = new LeadLagAnalyzer();
-let strategy, broker, portfolio, risk;
+let broker, portfolio, risk;
 let running = false;
-let lastPrice = null;      // latest SIGNAL price
-let execPrice = null;      // latest price on the venue we trade
-let history = [];          // [{ts, price}] for the sparkline
-let msgTimestamps = [];    // for msg/s on the signal feed
+
+// Everything below is keyed by symbol — ten coins run ten independent
+// strategies sharing one book of cash.
+let strategies = new Map();   // symbol -> MomentumScalper
+let signalPrice = new Map();  // symbol -> latest price on the signal venue
+let execPrice = new Map();    // symbol -> latest price on the exec venue
+let impulse = new Map();      // symbol -> current return over the lookback
+let history = [];             // [{ts, price}] sparkline for the focused symbol
+let msgTimestamps = [];
+let focus = settings.symbols[0];   // which coin the big price card shows
 
 // ---------------------------------------------------------------- session
 
@@ -28,13 +34,17 @@ function newSession() {
   broker = new PaperBroker(settings.broker);
   portfolio = new Portfolio(settings.broker.startingCash);
   risk = new RiskManager(settings.risk, settings.broker.startingCash);
-  strategy = new MomentumScalper(settings.strategy);
+  strategies = new Map(
+    settings.symbols.map((sym) => [sym, new MomentumScalper(settings.strategy)]),
+  );
   leadlag = new LeadLagAnalyzer({
     threshold: settings.leadlag.thresholdBp / 10000,
     window: settings.leadlag.windowMs,
   });
-  lastPrice = null;
-  execPrice = null;
+  signalPrice = new Map();
+  execPrice = new Map();
+  impulse = new Map();
+  if (!settings.symbols.includes(focus)) focus = settings.symbols[0];
   history = [];
   msgTimestamps = [];
   $('haltNotice').classList.add('hidden');
@@ -45,14 +55,15 @@ function newSession() {
 
 function start() {
   stopFeeds();
-  race = new FeedRace();
+  race = new FeedRace(settings.symbols[0]);
 
   // Both the signal and exec venues must be connected regardless of the race set.
   const ids = new Set([settings.signalFeed, settings.execFeed, ...settings.racing]);
   feeds = [...ids].map((id) => {
-    const feed = new Feed(id, settings.base, {
+    // One socket per venue carries every symbol.
+    const feed = new Feed(id, settings.symbols, {
       onTick: handleTick,
-      onStatus: (s) => { race.setStatus(id, s); renderRace(); },
+      onStatus: (st, detail) => { race.setStatus(id, st, detail); renderRace(); },
     });
     race.ensure(id);
     feed.start();
@@ -81,62 +92,82 @@ function stopFeeds() {
 // ---------------------------------------------------------------- ticks
 
 function handleTick(tick) {
+  const sym = tick.symbol;
   race.record(tick);
 
-  // The exec venue supplies fill prices and feeds the lead-lag measurement.
+  // The exec venue supplies fill prices; lead-lag is measured on the focused
+  // coin only, since mixing symbols would average unrelated moves together.
   if (tick.feedId === settings.execFeed) {
-    execPrice = tick.price;
-    leadlag.onExecTick(tick.price, tick.localTs);
+    execPrice.set(sym, tick.price);
+    if (sym === focus) leadlag.onExecTick(tick.price, tick.localTs);
   }
 
-  // Everything else below is driven by the signal feed only.
+  // Everything below is driven by the signal feed only.
   if (tick.feedId !== settings.signalFeed) return;
 
+  const strategy = strategies.get(sym);
+  if (!strategy) return;
+
   const t = { price: tick.price, ts: tick.localTs };
-  lastPrice = t.price;
-  leadlag.onSignalTick(tick.price, tick.localTs);
+  signalPrice.set(sym, t.price);
 
-  msgTimestamps.push(t.ts);
+  if (sym === focus) {
+    leadlag.onSignalTick(tick.price, tick.localTs);
+    msgTimestamps.push(t.ts);
+    history.push(t);
+    const hCut = t.ts - 60000;
+    while (history.length > 1 && history[0].ts < hCut) history.shift();
+  }
 
-  history.push(t);
-  const hCut = t.ts - 60000;
-  while (history.length > 1 && history[0].ts < hCut) history.shift();
+  // Can't price a fill until the exec venue has reported this symbol.
+  const fillPrice = settings.execFeed === settings.signalFeed
+    ? t.price : execPrice.get(sym);
+  if (fillPrice == null) return;
 
-  // Can't price a fill until the exec venue has reported at least once.
-  const fillPrice = settings.execFeed === settings.signalFeed ? t.price : execPrice;
-  if (fillPrice === null) return;
-
+  const pos = broker.position(sym);
   const signal = strategy.onTick(
     { ...t, execPrice: fillPrice },
-    { dir: broker.dir, entryPrice: broker.avgEntry },
+    { dir: broker.dir(sym), entryPrice: pos.avgEntry },
   );
+  impulse.set(sym, strategy._returnOver(
+    settings.strategy.lookbackSeconds, t.ts, t.price));
 
   const isEntry =
     signal.type === SIGNAL.ENTER_LONG || signal.type === SIGNAL.ENTER_SHORT;
 
-  if (isEntry && !broker.inPosition) {
-    const notional = risk.orderNotional(broker.cash);
+  if (isEntry && !broker.inPosition(sym)) {
+    const notional = risk.orderNotional(broker.cash, broker.openCount);
     if (notional > 0) {
       const side = signal.type === SIGNAL.ENTER_SHORT ? SHORT : LONG;
-      const fill = broker.open(side, notional, fillPrice, t.ts);
+      const fill = broker.open(sym, side, notional, fillPrice, t.ts);
       if (fill) {
         portfolio.recordFill(fill);
         strategy.noteEntry(t.ts);
         renderPosition();
       }
     }
-  } else if (signal.type === SIGNAL.EXIT && broker.inPosition) {
-    const fill = broker.close(fillPrice, t.ts);
+  } else if (signal.type === SIGNAL.EXIT && broker.inPosition(sym)) {
+    const fill = broker.close(sym, fillPrice, t.ts);
     if (fill) {
       portfolio.recordFill(fill, signal.reason);
       strategy.noteExit(t.ts);
-      risk.updateEquity(broker.equity(fillPrice));
+      risk.updateEquity(broker.equity(marks()));
       if (risk.halted) $('haltNotice').classList.remove('hidden');
       renderTrades();
       renderStats();
       renderPosition();
     }
   }
+}
+
+/** Latest mark price per symbol, preferring the venue we trade on. */
+function marks() {
+  const out = {};
+  for (const sym of settings.symbols) {
+    const p = execPrice.get(sym) ?? signalPrice.get(sym);
+    if (p != null) out[sym] = p;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------- render
@@ -146,7 +177,9 @@ let lastRendered = null;
 let flashTimer = null;
 
 function renderPrice() {
-  if (lastPrice === null) return;
+  const lastPrice = signalPrice.get(focus);
+  if (lastPrice == null) return;
+  $('symbolLabel').textContent = focus;
   const el = $('price');
   el.textContent = fmtPrice(lastPrice);
 
@@ -165,9 +198,7 @@ function renderPrice() {
   const cutNow = nowMs() - 1000;
   while (msgTimestamps.length && msgTimestamps[0] < cutNow) msgTimestamps.shift();
 
-  const ret = strategy
-    ? strategy._returnOver(settings.strategy.lookbackSeconds, nowMs(), lastPrice)
-    : 0;
+  const ret = impulse.get(focus) ?? 0;
   const pct = (ret * 100).toFixed(3);
   $('impulse').textContent =
     `${ret >= 0 ? '+' : ''}${pct}% / ${settings.strategy.lookbackSeconds}s`;
@@ -179,31 +210,69 @@ function renderPrice() {
 }
 
 function renderPosition() {
+  if (!broker) return;
   const state = $('posState');
   const detail = $('posDetail');
-  const mark = execPrice ?? lastPrice;
-  if (broker?.inPosition) {
-    state.textContent = broker.side;
-    state.classList.toggle('long', broker.side === LONG);
-    state.classList.toggle('short', broker.side === SHORT);
-    const u = mark ? broker.unrealized(mark) : 0;
-    detail.textContent =
-      `${broker.qty.toFixed(6)} @ ${fmtPrice(broker.avgEntry)}  ${fmtSigned(u)}`;
+  const m = marks();
+  const open = broker.openSymbols;
+
+  if (open.length) {
+    const parts = open.map((sym) => {
+      const pos = broker.position(sym);
+      const u = m[sym] ? broker.unrealized(sym, m[sym]) : 0;
+      return `${sym} ${pos.side === SHORT ? 'S' : 'L'} ${fmtSigned(u)}`;
+    });
+    state.textContent = `${open.length} open`;
+    state.classList.toggle('long', open.length > 0);
+    state.classList.remove('short');
+    detail.textContent = parts.join(' · ');
   } else {
     state.textContent = 'flat';
     state.classList.remove('long', 'short');
-    detail.textContent = risk?.halted ? 'halted' : 'waiting for impulse';
+    detail.textContent = risk?.halted
+      ? 'halted — daily loss limit'
+      : `watching ${settings.symbols.length} coins`;
   }
 
-  if (broker && mark) {
-    const eq = broker.equity(mark);
-    $('equity').textContent = fmtMoney(eq);
-    const diff = eq - broker.startingCash;
-    const pctChange = (diff / broker.startingCash) * 100;
-    const pnlEl = $('pnl');
-    pnlEl.textContent = `${fmtSigned(diff)} (${pctChange >= 0 ? '+' : ''}${pctChange.toFixed(3)}%)`;
-    pnlEl.style.color = diff > 0 ? 'var(--up)' : diff < 0 ? 'var(--down)' : '';
-  }
+  const eq = broker.equity(m);
+  $('equity').textContent = fmtMoney(eq);
+  const diff = eq - broker.startingCash;
+  const pctChange = (diff / broker.startingCash) * 100;
+  const pnlEl = $('pnl');
+  pnlEl.textContent =
+    `${fmtSigned(diff)} (${pctChange >= 0 ? '+' : ''}${pctChange.toFixed(3)}%)`;
+  pnlEl.style.color = diff > 0 ? 'var(--up)' : diff < 0 ? 'var(--down)' : '';
+}
+
+/** The scanner: every watched coin, its impulse, and any open position. */
+function renderScanner() {
+  if (!broker) return;
+  const m = marks();
+  const thr = settings.strategy.entryThreshold;
+
+  const rows = settings.symbols.map((sym) => {
+    const ret = impulse.get(sym) ?? 0;
+    const pos = broker.position(sym);
+    return { sym, price: m[sym], ret, pos };
+  }).sort((a, b) => Math.abs(b.ret) - Math.abs(a.ret));  // closest to firing first
+
+  $('scanTable').querySelector('tbody').innerHTML = rows.map((r) => {
+    const armed = Math.abs(r.ret) >= thr;
+    const cls = r.pos.qty > 0 ? 'holding' : armed ? 'armed' : '';
+    const posLabel = r.pos.qty > 0
+      ? `<span class="side ${r.pos.side === SHORT ? 'short' : 'long'}"
+          >${r.pos.side === SHORT ? 'S' : 'L'}</span>`
+      : '';
+    const u = r.pos.qty > 0 && m[r.sym] ? broker.unrealized(r.sym, m[r.sym]) : null;
+    return `<tr class="${cls}" data-sym="${r.sym}">
+      <td>${r.sym === focus ? '<b>' + r.sym + '</b>' : r.sym}</td>
+      <td class="r">${r.price != null ? fmtPrice(r.price) : '—'}</td>
+      <td class="r" style="color:${
+        r.ret >= thr ? 'var(--up)' : r.ret <= -thr ? 'var(--down)' : 'inherit'}">
+        ${r.ret >= 0 ? '+' : ''}${(r.ret * 100).toFixed(3)}%</td>
+      <td class="r">${posLabel}${u !== null ? ' ' + fmtSigned(u) : ''}</td>
+    </tr>`;
+  }).join('');
 }
 
 function renderStats() {
@@ -261,7 +330,7 @@ function renderTrades() {
       return `<li>
         <div>
           <div class="mono"><span class="side ${t.side === SHORT ? 'short' : 'long'}"
-            >${tag}</span> ${fmtPrice(t.entryPrice)} → ${fmtPrice(t.exitPrice)}</div>
+            >${tag}</span> ${escapeHtml(t.symbol)} ${fmtPrice(t.entryPrice)} → ${fmtPrice(t.exitPrice)}</div>
           <div class="trade-meta">${escapeHtml(t.reason)} · held ${held}s</div>
         </div>
         <div class="tpnl ${t.pnl >= 0 ? 'pos' : 'neg'}">
@@ -294,11 +363,13 @@ function renderRace() {
         ? '—'
         : isBest ? '0ms' : `+${Math.round(r.lagMs - best)}ms`;
       const rate = r.rate ?? 0;
+      const note = r.detail && r.status !== 'live'
+        ? `<div class="feed-note">${escapeHtml(r.detail)}</div>` : '';
       return `<tr class="${isBest && !dead ? 'fastest' : ''} ${dead ? 'dead' : ''}">
         <td><div class="venue">
           <span class="dot" data-state="${r.status}"></span>
           ${escapeHtml(meta.label)}${feedRole(r.feedId)}
-        </div></td>
+        </div>${note}</td>
         <td class="r">${rate}</td>
         <td class="r">${lag}</td>
         <td class="r">${r.price ? fmtPrice(r.price) : '—'}</td>
@@ -475,7 +546,8 @@ function updateSpotWarning() {
 }
 
 function syncSettingsUI() {
-  $('setBase').value = settings.base;
+  $('setSymbols').value = settings.symbols.join(', ');
+  $('setMaxPos').value = settings.risk.maxConcurrentPositions;
   $('setSignalFeed').value = settings.signalFeed;
   $('setExecFeed').value = settings.execFeed;
   $('setLlThreshold').value = settings.leadlag.thresholdBp;
@@ -492,7 +564,6 @@ function syncSettingsUI() {
   document.querySelectorAll('#raceChecks input').forEach((cb) => {
     cb.checked = settings.racing.includes(cb.value);
   });
-  $('symbolLabel').textContent = settings.base;
 }
 
 function readSettingsUI() {
@@ -500,7 +571,9 @@ function readSettingsUI() {
     const v = parseFloat($(id).value);
     return Number.isFinite(v) ? v : fallback;
   };
-  settings.base = $('setBase').value;
+  settings.symbols = parseSymbols($('setSymbols').value);
+  settings.risk.maxConcurrentPositions =
+    Math.max(1, Math.round(num('setMaxPos', DEFAULTS.risk.maxConcurrentPositions)));
   settings.signalFeed = $('setSignalFeed').value;
   settings.execFeed = $('setExecFeed').value;
   settings.leadlag.thresholdBp = num('setLlThreshold', DEFAULTS.leadlag.thresholdBp);
@@ -514,7 +587,16 @@ function readSettingsUI() {
   settings.strategy.lookbackSeconds = num('setLookback', 5);
   settings.broker.feeBps = num('setFee', DEFAULTS.broker.feeBps);
   settings.broker.startingCash = num('setCash', DEFAULTS.broker.startingCash);
-  $('symbolLabel').textContent = settings.base;
+}
+
+/** "btc, eth , sol" -> ['BTC','ETH','SOL'], deduped and capped. */
+function parseSymbols(raw) {
+  const out = [];
+  for (const part of String(raw).split(/[\s,]+/)) {
+    const sym = part.trim().toUpperCase();
+    if (sym && !out.includes(sym)) out.push(sym);
+  }
+  return out.length ? out.slice(0, 20) : [...DEFAULTS.symbols];
 }
 
 // ---------------------------------------------------------------- boot
@@ -529,8 +611,21 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
+// Tapping a scanner row focuses that coin in the big price card.
+$('scanTable').addEventListener('click', (e) => {
+  const row = e.target.closest('tr[data-sym]');
+  if (!row) return;
+  focus = row.dataset.sym;
+  history = [];
+  msgTimestamps = [];
+  leadlag.reset();
+  renderScanner();
+  renderPrice();
+});
+
 buildSettingsUI();
 newSession();
+renderScanner();
 renderRace();
 renderLeadLag();
 
@@ -539,6 +634,7 @@ renderLeadLag();
 setInterval(() => {
   renderPrice();
   renderPosition();
+  renderScanner();
   renderRace();
 }, 250);
 setInterval(renderSpark, 500);
