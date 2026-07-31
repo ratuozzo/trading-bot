@@ -208,3 +208,52 @@ def test_mexc_ignores_other_channels():
 def test_factory_builds_mexc_by_default():
     from tradingbot.feeds import MEXCFuturesFeed
     assert isinstance(build_feed(FeedConfig()), MEXCFuturesFeed)
+
+
+def test_mexc_parses_live_batched_array_shape():
+    """The live feed sends data as a LIST of deals; the published docs show a
+    bare object. Parsing only the documented shape yielded NaN prices."""
+    from tradingbot.feeds import MEXCFuturesFeed
+    f = MEXCFuturesFeed("BTC_USDT")
+    # Captured verbatim from wss://contract.mexc.com/edge
+    tick = f._parse({
+        "symbol": "BTC_USDT",
+        "data": [{"p": 63097.6, "v": 9, "T": 2, "O": 3, "M": 1,
+                  "t": 1785520206116, "i": "15543795988",
+                  "cts": "1785520206116"}],
+        "channel": "push.deal",
+        "ts": 1785520206116,
+    })
+    assert tick is not None
+    assert tick.price == 63097.6
+    assert tick.quantity == 9
+    assert tick.timestamp == pytest.approx(1785520206.116)
+
+
+def test_mexc_takes_latest_deal_from_a_batch():
+    from tradingbot.feeds import MEXCFuturesFeed
+    f = MEXCFuturesFeed("BTC_USDT")
+    tick = f._parse({
+        "symbol": "BTC_USDT", "channel": "push.deal", "ts": 3,
+        "data": [{"p": 100.0, "v": 1, "t": 1}, {"p": 101.5, "v": 2, "t": 2}],
+    })
+    assert tick.price == 101.5
+
+
+def test_mexc_rejects_prices_that_would_become_nan():
+    """A missing or junk price must yield no tick at all — never a NaN, which
+    would propagate silently into every downstream number."""
+    from tradingbot.feeds import MEXCFuturesFeed
+    f = MEXCFuturesFeed("BTC_USDT")
+    for bad in ([{"v": 1, "t": 1}], [{"p": None}], [{"p": "abc"}], [], [{"p": 0}]):
+        assert f._parse({
+            "symbol": "BTC_USDT", "channel": "push.deal", "data": bad, "ts": 1,
+        }) is None
+
+
+def test_mexc_subscribe_ack_is_not_a_tick():
+    from tradingbot.feeds import MEXCFuturesFeed
+    f = MEXCFuturesFeed("BTC_USDT")
+    assert f._parse(
+        {"channel": "rs.sub.deal", "data": "success", "ts": 1785520205862}
+    ) is None

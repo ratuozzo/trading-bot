@@ -44,18 +44,29 @@ class MEXCFuturesFeed(SubscribeWebSocketFeed):
     def _parse(self, msg: dict) -> Optional[Tick]:
         if msg.get("channel") != "push.deal":
             return None
+
         data = msg.get("data")
+        # The live feed batches deals in a list; the docs show a bare object.
+        # Accept both, and take the most recent deal in a batch.
+        if isinstance(data, list):
+            data = data[-1] if data else None
         if not isinstance(data, dict):
             return None
+
         try:
-            return Tick(
-                symbol=msg.get("symbol", self.symbol),
-                price=float(data["p"]),
-                quantity=float(data.get("v", 0.0)),
-                timestamp=float(data.get("t") or msg.get("ts") or 0) / 1000.0,
-            )
+            price = float(data["p"])
         except (KeyError, ValueError, TypeError):
             return None
+        # A non-finite price would poison every downstream calculation.
+        if price <= 0 or price != price:
+            return None
+
+        return Tick(
+            symbol=msg.get("symbol", self.symbol),
+            price=price,
+            quantity=_as_float(data.get("v")),
+            timestamp=_as_float(data.get("t") or msg.get("ts")) / 1000.0,
+        )
 
 
 def _normalise(symbol: str) -> str:
@@ -66,3 +77,10 @@ def _normalise(symbol: str) -> str:
         if s.endswith(quote):
             return f"{s[: -len(quote)]}_{quote}"
     return s
+
+
+def _as_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default

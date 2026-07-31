@@ -125,6 +125,14 @@ export class Feed {
       if (err) { this._status('error', err); return; }
 
       for (const tick of this._parse(msg)) {
+        // Never let an unparseable price reach the rest of the app. A single
+        // NaN propagates into every downstream number — impulse, equity, the
+        // strategy windows — and shows up everywhere at once, which makes the
+        // real cause very hard to see. Drop it here and say so instead.
+        if (!Number.isFinite(tick.price) || tick.price <= 0) {
+          this._status('error', 'received a message with no usable price');
+          continue;
+        }
         this._sawMessage = true;
         this._status('live');
         this.onTick({ ...tick, feedId: this.id, localTs });
@@ -239,13 +247,15 @@ export class Feed {
           if (msg.channel !== 'push.deal' || !msg.data) return [];
           const base = this.symbolToBase.get(msg.symbol);
           if (!base) return [];
-          const d = msg.data;
-          return [{
+          // The live feed batches deals in an array — the docs show a bare
+          // object. Accept both so neither shape breaks us.
+          const deals = Array.isArray(msg.data) ? msg.data : [msg.data];
+          return deals.map((d) => ({
             symbol: base,
             price: parseFloat(d.p),
             qty: parseFloat(d.v || 0),
             exchangeTs: Number(d.t || msg.ts || 0),
-          }];
+          }));
         }
         case 'bybit': {
           if (!String(msg.topic || '').startsWith('publicTrade')) return [];
