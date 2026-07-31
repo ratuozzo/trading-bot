@@ -3,9 +3,11 @@
 # Secrets (API keys) must NOT go in this file — use env vars instead.
 
 feed:
-  exchange: binance
-  symbol: btcusdt      # try ethusdt, solusdt, etc. (lowercase)
-  stream: trade        # "trade" = last price (fastest) | "bookTicker" = bid/ask
+  exchange: binance    # binance | bybit | okx
+  symbol: btcusdt      # binance: btcusdt · bybit: BTCUSDT · okx: BTC-USDT-SWAP
+  market: futures      # "futures" = perps (lead spot in price discovery) | "spot"
+  stream: aggTrade     # trade/aggTrade = prints | bookTicker = top of book
+                       # (okx maps bookTicker to bbo-tbt, its tick-by-tick feed)
 
 strategy:
   lookback_seconds: 5.0     # window used to measure the price impulse
@@ -25,5 +27,5 @@ risk:
 broker:
   mode: paper                # "paper" (simulated) or "live" (real money — stub)
   starting_cash: 10000.0     # paper balance in quote currency (USDT)
-  fee_bps: 10.0              # taker fee, 10 bps = 0.10%
+  fee_bps: 5.0               # taker fee; perps ~5bps, spot ~10bps. Check yours.
   slippage_bps: 2.0          # assumed slippage per fill

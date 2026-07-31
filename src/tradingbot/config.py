@@ -19,9 +19,10 @@ except ImportError:  # pragma: no cover - yaml is a declared dependency
 
 @dataclass
 class FeedConfig:
-    exchange: str = "binance"
-    symbol: str = "btcusdt"        # exchange symbol, lowercase for binance streams
-    stream: str = "trade"          # "trade" (last price) or "bookTicker" (bid/ask)
+    exchange: str = "binance"      # binance | bybit | okx
+    symbol: str = "btcusdt"        # venue symbol (binance lowercases, others upper)
+    stream: str = "aggTrade"       # "trade"/"aggTrade" (prints) or "bookTicker" (bid/ask)
+    market: str = "futures"        # "futures" (perps lead spot) or "spot"
 
 
 @dataclass
@@ -94,6 +95,7 @@ _ENV_MAP = {
     "TB_SYMBOL": ("feed", "symbol", str),
     "TB_STREAM": ("feed", "stream", str),
     "TB_EXCHANGE": ("feed", "exchange", str),
+    "TB_MARKET": ("feed", "market", str),
     "TB_MODE": ("broker", "mode", str),
     "TB_STARTING_CASH": ("broker", "starting_cash", float),
     "TB_FEE_BPS": ("broker", "fee_bps", float),

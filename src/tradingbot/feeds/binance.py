@@ -1,10 +1,13 @@
-"""Binance public WebSocket feed.
+"""Binance public WebSocket feed (spot and USD-M futures).
 
-Binance exposes free, no-authentication market-data streams. Two are useful
-for scalping small moves:
+Binance exposes free, no-authentication market-data streams:
 
-* ``<symbol>@trade``      - every executed trade (fastest last-price updates)
+* ``<symbol>@trade``      - every executed trade
+* ``<symbol>@aggTrade``   - aggregated trades (futures; fewer, denser messages)
 * ``<symbol>@bookTicker`` - best bid/ask, pushed on every change
+
+Prefer ``market="futures"``: perpetual futures lead spot in price discovery
+because leveraged flow arrives there first, so impulses show up sooner.
 
 Docs: https://developers.binance.com/docs/binance-spot-api-docs/web-socket-streams
 
@@ -26,19 +29,29 @@ from .base import PriceFeed
 
 log = logging.getLogger(__name__)
 
-_BASE_URL = "wss://stream.binance.com:9443/ws"
-_VALID_STREAMS = {"trade", "bookTicker"}
+_SPOT_URL = "wss://stream.binance.com:9443/ws"
+_FUTURES_URL = "wss://fstream.binance.com/ws"
+_VALID_STREAMS = {"trade", "aggTrade", "bookTicker"}
 
 
 class BinanceWebSocketFeed(PriceFeed):
-    def __init__(self, symbol: str = "btcusdt", stream: str = "trade") -> None:
+    def __init__(
+        self,
+        symbol: str = "btcusdt",
+        stream: str = "trade",
+        market: str = "spot",
+    ) -> None:
         if stream not in _VALID_STREAMS:
             raise ValueError(
                 f"Unsupported stream {stream!r}. Choose one of {sorted(_VALID_STREAMS)}."
             )
+        if market not in {"spot", "futures"}:
+            raise ValueError(f"market must be 'spot' or 'futures', got {market!r}.")
         self.symbol = symbol.lower()
         self.stream_type = stream
-        self.url = f"{_BASE_URL}/{self.symbol}@{stream}"
+        self.market = market
+        base = _FUTURES_URL if market == "futures" else _SPOT_URL
+        self.url = f"{base}/{self.symbol}@{stream}"
 
     async def stream(self) -> AsyncIterator[Tick]:
         backoff = 1.0
@@ -66,7 +79,7 @@ class BinanceWebSocketFeed(PriceFeed):
         except (ValueError, TypeError):
             return None
 
-        if self.stream_type == "trade":
+        if self.stream_type in ("trade", "aggTrade"):
             try:
                 return Tick(
                     symbol=msg["s"],

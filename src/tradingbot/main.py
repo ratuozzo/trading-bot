@@ -24,7 +24,17 @@ def parse_args(argv=None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Real-time crypto momentum scalping bot.")
     p.add_argument("--config", default="config.yaml", help="path to config file")
     p.add_argument("--symbol", help="override symbol, e.g. btcusdt, ethusdt")
-    p.add_argument("--stream", choices=["trade", "bookTicker"], help="feed stream type")
+    p.add_argument(
+        "--exchange", choices=["binance", "bybit", "okx"], help="which venue to stream"
+    )
+    p.add_argument(
+        "--stream",
+        choices=["trade", "aggTrade", "bookTicker"],
+        help="feed stream type",
+    )
+    p.add_argument(
+        "--market", choices=["futures", "spot"], help="perps (faster) or spot"
+    )
     p.add_argument("--mode", choices=["paper", "live"], help="broker mode")
     p.add_argument("-v", "--verbose", action="store_true", help="debug logging")
     return p.parse_args(argv)
@@ -34,8 +44,12 @@ def build_config(args: argparse.Namespace) -> Config:
     cfg = Config.load(args.config)
     if args.symbol:
         cfg.feed.symbol = args.symbol
+    if args.exchange:
+        cfg.feed.exchange = args.exchange
     if args.stream:
         cfg.feed.stream = args.stream
+    if args.market:
+        cfg.feed.market = args.market
     if args.mode:
         cfg.broker.mode = args.mode
     return cfg
@@ -50,8 +64,9 @@ async def run(cfg: Config) -> None:
     engine = Engine(feed, strategy, broker, risk, portfolio)
 
     logging.info(
-        "Mode=%s  symbol=%s  stream=%s  starting_cash=%.2f",
-        cfg.broker.mode, cfg.feed.symbol, cfg.feed.stream, cfg.broker.starting_cash,
+        "Mode=%s  %s %s %s/%s  starting_cash=%.2f",
+        cfg.broker.mode, cfg.feed.exchange, cfg.feed.symbol,
+        cfg.feed.market, cfg.feed.stream, cfg.broker.starting_cash,
     )
     if cfg.broker.mode == "paper":
         logging.info("PAPER TRADING — no real orders, no real money.")

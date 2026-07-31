@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0e14" />
+  <meta name="description" content="Live crypto momentum scalping dashboard — paper trading only." />
+  <title>Scalper — live paper trading</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>📈</text></svg>" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot" id="masterDot" data-state="idle"></span>
+      <h1>Scalper</h1>
+      <span class="badge">PAPER</span>
+    </div>
+    <button id="runBtn" class="run-btn">Start</button>
+  </header>
+
+  <main>
+    <!-- Live price -->
+    <section class="card price-card">
+      <div class="row between">
+        <span class="label" id="symbolLabel">BTC</span>
+        <span class="label mono" id="feedLabel">—</span>
+      </div>
+      <div class="price mono" id="price">—</div>
+      <div class="row between sub">
+        <span class="mono" id="impulse">—</span>
+        <span class="mono dim" id="rate">0 msg/s</span>
+      </div>
+      <div class="spark"><canvas id="spark" height="48"></canvas></div>
+    </section>
+
+    <!-- Position + equity -->
+    <div class="grid2">
+      <section class="card">
+        <div class="label">Position</div>
+        <div class="stat mono" id="posState">flat</div>
+        <div class="sub mono" id="posDetail">—</div>
+      </section>
+      <section class="card">
+        <div class="label">Equity</div>
+        <div class="stat mono" id="equity">—</div>
+        <div class="sub mono" id="pnl">—</div>
+      </section>
+    </div>
+
+    <!-- Feed race -->
+    <section class="card">
+      <div class="row between">
+        <div class="label">Feed race <span class="dim">— lag behind fastest</span></div>
+        <button class="mini" id="resetRace">reset</button>
+      </div>
+      <table class="feeds" id="raceTable">
+        <thead>
+          <tr><th>Venue</th><th class="r">Msg/s</th><th class="r">Lag</th><th class="r">Price</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p class="hint">
+        Lag is measured with your device's clock on both sides, so it reflects
+        real arrival order from <em>your</em> location — not exchange clock skew.
+        Whichever venue sits at 0ms is the one to trade on.
+      </p>
+    </section>
+
+    <!-- Stats -->
+    <section class="card">
+      <div class="label">Session</div>
+      <div class="stats-row">
+        <div><span class="dim">Trades</span><b class="mono" id="nTrades">0</b></div>
+        <div><span class="dim">Win rate</span><b class="mono" id="winRate">—</b></div>
+        <div><span class="dim">Realized</span><b class="mono" id="realized">—</b></div>
+      </div>
+      <div id="haltNotice" class="halt hidden">Daily loss limit hit — entries halted.</div>
+    </section>
+
+    <!-- Trades -->
+    <section class="card">
+      <div class="label">Trades</div>
+      <ul class="trades" id="tradeList"><li class="empty">No trades yet.</li></ul>
+    </section>
+
+    <!-- Settings -->
+    <details class="card settings">
+      <summary>Settings</summary>
+
+      <label>Asset
+        <select id="setBase">
+          <option>BTC</option><option>ETH</option><option>SOL</option>
+          <option>XRP</option><option>DOGE</option>
+        </select>
+      </label>
+
+      <label>Trade on feed
+        <select id="setFeed"></select>
+      </label>
+
+      <fieldset>
+        <legend>Race these feeds</legend>
+        <div id="raceChecks" class="checks"></div>
+      </fieldset>
+
+      <div class="fields">
+        <label>Entry impulse %<input type="number" id="setEntry" step="0.01" /></label>
+        <label>Take profit %<input type="number" id="setTp" step="0.01" /></label>
+        <label>Stop loss %<input type="number" id="setSl" step="0.01" /></label>
+        <label>Lookback (s)<input type="number" id="setLookback" step="0.5" /></label>
+        <label>Fee (bps)<input type="number" id="setFee" step="0.5" /></label>
+        <label>Start cash<input type="number" id="setCash" step="100" /></label>
+      </div>
+
+      <div class="row gap">
+        <button class="mini" id="applyBtn">Apply &amp; restart</button>
+        <button class="mini danger" id="resetBtn">Reset session</button>
+      </div>
+
+      <p class="hint">
+        Round-trip cost is roughly 2× fee + slippage. If take-profit doesn't
+        clearly beat that, the strategy loses money even when it's right.
+      </p>
+    </details>
+
+    <p class="disclaimer">
+      Simulated trading only — no exchange keys, no real orders. Prices are live
+      public market data. Educational software, not financial advice.
+    </p>
+  </main>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
