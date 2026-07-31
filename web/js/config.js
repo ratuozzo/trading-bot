@@ -43,6 +43,30 @@ export const DEFAULTS = {
   },
 };
 
+/**
+ * Taker fees in basis points, one way. Verified July 2026 — fee schedules move,
+ * so re-check your account's fee page before trusting any result.
+ *
+ * The MEXC entries are the trap worth knowing about: MEXC advertises 0% maker
+ * and near-zero futures fees, but orders sent through the API are billed on a
+ * SEPARATE schedule that overrides the displayed rates, and API accounts are
+ * excluded from the zero-fee promotions. That API schedule was raised three
+ * times between March and June 2026 (futures maker 0.01% -> 0.06%), so treat
+ * it as a moving target rather than an edge.
+ *
+ * Note these are all TAKER rates. An impulse strategy has to cross the spread,
+ * so the 0% maker rates are not reachable by it — a post-only order either
+ * misses the move or fills because the move reversed.
+ */
+export const FEE_PRESETS = [
+  { id: 'binance-perp', label: 'Binance USD-M perp taker', bps: 5.0 },
+  { id: 'mexc-spot', label: 'MEXC spot taker', bps: 5.0 },
+  { id: 'binance-spot-bnb', label: 'Binance spot taker + BNB', bps: 7.5 },
+  { id: 'mexc-api-futures', label: 'MEXC futures via API', bps: 8.0 },
+  { id: 'binance-spot', label: 'Binance spot taker', bps: 10.0 },
+  { id: 'custom', label: 'Custom', bps: null },
+];
+
 const KEY = 'tradingbot.settings.v1';
 
 export function loadSettings() {

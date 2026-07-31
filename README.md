@@ -168,10 +168,56 @@ Copy `.env.example` to `.env` for local overrides — it's git-ignored.
 | `broker.fee_bps` | Taker fee — **crucial**, must be well under your edge |
 | `risk.daily_loss_limit_pct` | Auto-halt after this much daily loss |
 
-**Watch the fees.** A round trip costs roughly `2 × fee + slippage`. At 5bps
-that's ~0.12% before you make a cent, so a 0.20% take-profit keeps under half
-its gross. If take-profit doesn't clearly beat the round-trip cost, the strategy
-loses money *even when its direction calls are right*.
+**Watch the fees.** A round trip costs `2 × fee + 2 × slippage`. If take-profit
+doesn't clearly beat that, the strategy loses money *even when its direction
+calls are right*. At Binance spot's 10bp taker, the default 0.20% take-profit
+nets **−2bp on a winning trade** — you would grind the account down while the
+win-rate display reads 100%.
+
+### Venue fee reality (checked July 2026)
+
+All figures are **taker** rates, because an impulse strategy has to cross the
+spread. Re-check your own account's fee page — these move.
+
+| Venue | Taker (one way) | Round trip |
+| --- | --- | --- |
+| Binance USD-M perp | 0.05% | **10 bp** |
+| MEXC spot | 0.05% | 10 bp |
+| Binance spot + BNB discount | 0.075% | 15 bp |
+| MEXC futures **via API** | 0.08% | 16 bp |
+| Binance spot | 0.10% | 20 bp |
+
+**The MEXC trap.** MEXC advertises 0% maker and near-zero futures fees, and
+that is real — for manual web/app trading. Orders sent through the **API are
+billed on a separate schedule that overrides the displayed rates**, and API
+accounts are excluded from the zero-fee promotions. That schedule was raised
+three times in three months:
+
+| Effective | API futures maker | API futures taker |
+| --- | --- | --- |
+| Mar 31, 2026 | 0.01% | 0.05% |
+| May 1, 2026 | 0.04% | 0.06% |
+| Jun 1, 2026 | 0.06% | 0.08% |
+
+A bot is an API trader, so it pays the API rate — currently *worse* than
+Binance perps. Building a strategy whose profitability depends on that number
+means building on something that rose 6× in two months.
+
+**Why 0% maker doesn't rescue it.** Zero-maker rates exist on several venues,
+but this strategy structurally cannot reach them. Impulse-following is a taker
+strategy: you detect a move and need in immediately. A post-only order either
+never fills (you miss the move) or fills *because price came back to you* —
+which usually means the impulse died. The maker rate is available mainly when
+you are on the wrong side. Harvesting it means becoming a market maker, which
+is a different and considerably harder business.
+
+Also weigh **spread and depth**, not just the headline fee: thinner books mean
+worse fills, and the simulator's flat slippage assumption will flatter a
+low-liquidity venue.
+
+Sources: [MEXC API futures fee update, Jun 1 2026](https://www.mexc.com/announcements/article/updates-to-api-futures-trading-fees-jun-1-2026-17827791535742),
+[MEXC API futures launch, Mar 31 2026](https://www.mexc.com/announcements/article/introducing-api-futures-trading-on-mar-31-2026-17827791534551),
+[MEXC fee overview](https://www.mexc.com/crypto-pulse/article/mexc-trading-fees-complete-guide-39643).
 
 ---
 

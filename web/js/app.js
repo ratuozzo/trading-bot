@@ -2,7 +2,7 @@
 // Everything runs in the browser: your phone connects straight to the
 // exchanges, so there's no server hop adding latency.
 
-import { DEFAULTS, loadSettings, saveSettings } from './config.js';
+import { DEFAULTS, FEE_PRESETS, loadSettings, saveSettings } from './config.js';
 import { FEEDS, Feed, FeedRace } from './feeds.js';
 import { MomentumScalper, SIGNAL } from './strategy.js';
 import { PaperBroker, Portfolio, RiskManager } from './broker.js';
@@ -393,6 +393,17 @@ function buildSettingsUI() {
   $('setSignalFeed').innerHTML = opts;
   $('setExecFeed').innerHTML = opts;
 
+  $('setFeePreset').innerHTML = FEE_PRESETS
+    .map((p) => `<option value="${p.id}">${p.label}${
+      p.bps === null ? '' : ` — ${p.bps}bp`}</option>`)
+    .join('');
+  // Picking a preset just fills the fee box; the box stays the source of truth.
+  $('setFeePreset').addEventListener('change', (e) => {
+    const preset = FEE_PRESETS.find((p) => p.id === e.target.value);
+    if (preset && preset.bps !== null) $('setFee').value = preset.bps;
+  });
+  $('setFee').addEventListener('input', () => { $('setFeePreset').value = 'custom'; });
+
   $('raceChecks').innerHTML = Object.entries(FEEDS)
     .map(([id, m]) => `<label><input type="checkbox" value="${id}" /> ${m.label}</label>`)
     .join('');
@@ -428,6 +439,8 @@ function syncSettingsUI() {
   $('setLookback').value = settings.strategy.lookbackSeconds;
   $('setFee').value = settings.broker.feeBps;
   $('setCash').value = settings.broker.startingCash;
+  const match = FEE_PRESETS.find((p) => p.bps === settings.broker.feeBps);
+  $('setFeePreset').value = match ? match.id : 'custom';
   document.querySelectorAll('#raceChecks input').forEach((cb) => {
     cb.checked = settings.racing.includes(cb.value);
   });
