@@ -141,7 +141,8 @@ function handleTick(tick) {
     signal.type === SIGNAL.ENTER_LONG || signal.type === SIGNAL.ENTER_SHORT;
 
   if (isEntry && !broker.inPosition(sym)) {
-    const notional = risk.orderNotional(broker.cash, broker.openCount);
+    const notional = risk.orderNotional(
+        broker.cash, broker.openCount, broker.equity(marks()));
     if (notional > 0) {
       const side = signal.type === SIGNAL.ENTER_SHORT ? SHORT : LONG;
       const fill = broker.open(sym, side, notional, fillPrice, t.ts);

@@ -170,11 +170,24 @@ export class RiskManager {
    * Size for one new position. `openCount` caps how many coins can be held at
    * once — without it the first signal of the session would swallow all the
    * cash and the other nine coins would never get a turn.
+   *
+   * Sizing modes:
+   *   'equity' (default) — every position is the same fraction of equity, so
+   *     three concurrent positions match regardless of which fired first.
+   *   'cash' — a fraction of REMAINING cash, which compounds down. At 30%
+   *     that's 3000 / 2100 / 1470: the coin that moved first gets twice the
+   *     bet of the third, and nothing about the signal justifies that.
    */
-  orderNotional(cash, openCount = 0) {
+  orderNotional(cash, openCount = 0, equity = 0) {
     if (this.halted) return 0;
     if (openCount >= this.cfg.maxConcurrentPositions) return 0;
-    const notional = cash * this.cfg.orderSizePct;
+
+    const target = this.cfg.positionSizing === 'cash' || !equity
+      ? cash * this.cfg.orderSizePct
+      : equity * this.cfg.orderSizePct;
+
+    // Never commit more than we hold — no implicit leverage.
+    const notional = Math.min(target, cash);
     return notional < this.cfg.minNotional ? 0 : notional;
   }
 

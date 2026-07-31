@@ -20,18 +20,42 @@ class RiskManager:
     def halted(self) -> bool:
         return self._halted
 
-    def order_notional(self, available_cash: float, open_count: int = 0) -> float:
+    def order_notional(
+        self,
+        available_cash: float,
+        open_count: int = 0,
+        equity: float | None = None,
+    ) -> float:
         """Quote-currency amount to spend on an entry (0 to skip).
 
         ``open_count`` caps how many coins can be held at once. Without it the
         first signal of the session would swallow all the cash and the other
         symbols would never get a turn.
+
+        Sizing modes:
+
+        ``equity`` (default)
+            Every position is the same fraction of total equity, so three
+            concurrent positions are the same size regardless of which fired
+            first.
+        ``cash``
+            The old behaviour: a fraction of *remaining* cash, which
+            compounds down. At 30% that gives 3000 / 2100 / 1470 — the coin
+            that happened to move first gets twice the bet of the third, and
+            nothing about the signal justifies that.
         """
         if self._halted:
             return 0.0
         if open_count >= self.cfg.max_concurrent_positions:
             return 0.0
-        notional = available_cash * self.cfg.order_size_pct
+
+        if self.cfg.position_sizing == "equity" and equity and equity > 0:
+            target = equity * self.cfg.order_size_pct
+        else:
+            target = available_cash * self.cfg.order_size_pct
+
+        # Never commit more than we actually hold — no implicit leverage.
+        notional = min(target, available_cash)
         if notional < self.cfg.min_notional:
             return 0.0
         return notional

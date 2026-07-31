@@ -41,7 +41,11 @@ risk:
   # positions: at 0.95 the first entry takes almost everything and the cap
   # below becomes meaningless, because nothing is left to open with.
   max_concurrent_positions: 3
-  order_size_pct: 0.30       # fraction of available cash per entry
+  # "equity" keeps every position the same size. "cash" sizes off remaining
+  # cash, which compounds down and gives whichever coin fires first a much
+  # larger bet than the third — arrival order is not signal quality.
+  position_sizing: equity
+  order_size_pct: 0.25       # of equity, so 3 x 25% = 75% deployed
   min_notional: 10.0         # skip orders smaller than this
   daily_loss_limit_pct: 0.05 # halt after -5% on the day
 

@@ -61,7 +61,11 @@ class StrategyConfig:
 class RiskConfig:
     # Many coins share one book, so no single entry may hog the cash.
     max_concurrent_positions: int = 3
-    order_size_pct: float = 0.30       # fraction of available cash per entry
+    # "equity": every position is the same fraction of total equity.
+    # "cash":   fraction of remaining cash, which compounds down and hands the
+    #           first signal a much larger bet than the third.
+    position_sizing: str = "equity"
+    order_size_pct: float = 0.25       # of equity, so 3 x 25% = 75% deployed
     min_notional: float = 10.0         # skip orders smaller than this (quote ccy)
     daily_loss_limit_pct: float = 0.05 # stop trading after -5% on the day
 
@@ -130,6 +134,7 @@ _ENV_MAP = {
     "TB_STOP_LOSS": ("strategy", "stop_loss", float),
     "TB_ORDER_SIZE_PCT": ("risk", "order_size_pct", float),
     "TB_MAX_POSITIONS": ("risk", "max_concurrent_positions", int),
+    "TB_POSITION_SIZING": ("risk", "position_sizing", str),
     "TB_HOST": ("server", "host", str),
     "TB_PORT": ("server", "port", int),
     "TB_API_TOKEN": ("server", "token", str),

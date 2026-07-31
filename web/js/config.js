@@ -46,7 +46,10 @@ export const DEFAULTS = {
   risk: {
     // Ten coins share the book, so no single entry may hog the cash.
     maxConcurrentPositions: 3,
-    orderSizePct: 0.30,
+    // 'equity' keeps every position the same size; 'cash' sizes off remaining
+    // cash and hands whichever coin fires first a much larger bet.
+    positionSizing: 'equity',
+    orderSizePct: 0.25,        // of equity, so 3 x 25% = 75% deployed
     minNotional: 10,
     dailyLossLimitPct: 0.05,
   },

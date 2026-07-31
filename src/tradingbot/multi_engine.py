@@ -129,7 +129,9 @@ class MultiEngine:
         else:
             ref = tick.bid if tick.bid is not None else tick.price
 
-        notional = self.risk.order_notional(self.broker.cash, self.open_count)
+        notional = self.risk.order_notional(
+            self.broker.cash, self.open_count, self.equity()
+        )
         if notional <= 0:
             return
         fill = self.broker.open(tick.symbol, side, notional, ref, tick.timestamp)

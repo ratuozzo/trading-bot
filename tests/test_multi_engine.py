@@ -167,13 +167,14 @@ def _notionals(eng, syms):
     return out
 
 
-def test_oversized_positions_make_allocation_wildly_unequal(cfg):
-    """The real failure mode of a large order_size_pct.
+def test_cash_sizing_makes_allocation_wildly_unequal(cfg):
+    """The failure mode of the legacy "cash" sizing mode.
 
     It isn't that later coins can't open — they can, on the crumbs. The first
     entry takes 95% of the book, the second 95% of what's left, and the third
     is a rounding error. The signals are treated as equals; the sizing is not.
     """
+    cfg.risk.position_sizing = "cash"
     cfg.risk.order_size_pct = 0.95
     syms = ["AAA", "BBB", "CCC"]
     ticks = interleave(*[ramp(s, 100.0, 0.0008, 30) for s in syms])
@@ -184,15 +185,47 @@ def test_oversized_positions_make_allocation_wildly_unequal(cfg):
     assert max(sizes) / min(sizes) > 50, "expected grossly unequal sizing"
 
 
-def test_configured_sizing_allocates_comparably_across_coins(cfg):
+def test_equity_sizing_gives_every_coin_the_same_position(cfg):
+    """Arrival order is not signal quality: whichever coin fires first must
+    not get a bigger bet than the one that fires third."""
+    cfg.risk.position_sizing = "equity"
+    cfg.risk.order_size_pct = 0.25
     syms = ["AAA", "BBB", "CCC"]
     ticks = interleave(*[ramp(s, 100.0, 0.0008, 30) for s in syms])
     eng = build(cfg, syms, ticks)
     run(eng)
     sizes = _notionals(eng, syms)
     assert len(sizes) >= 2
-    # 0.30 compounding gives 3000 / 2100 / 1470 — same order of magnitude.
-    assert max(sizes) / min(sizes) < 4, "positions should be broadly comparable"
+    assert max(sizes) / min(sizes) < 1.05, f"sizes should match, got {sizes}"
+
+
+def test_equity_sizing_never_implies_leverage(cfg):
+    """An over-committed plan (3 x 60% = 180%) must clamp to available cash.
+
+    Note the comparison is against *current* equity, not starting cash:
+    winning trades grow equity, so later positions are legitimately larger.
+    What must never happen is spending cash we do not have.
+    """
+    cfg.risk.position_sizing = "equity"
+    cfg.risk.order_size_pct = 0.60
+    cfg.risk.max_concurrent_positions = 3
+    syms = ["AAA", "BBB", "CCC"]
+    ticks = interleave(*[ramp(s, 100.0, 0.0008, 30) for s in syms])
+    eng = build(cfg, syms, ticks)
+    run(eng)
+    assert eng.broker.cash >= -1e-9, "spent cash we did not have"
+    assert sum(_notionals(eng, syms)) <= eng.equity() + 1e-6, "implied leverage"
+
+
+def test_total_exposure_matches_the_configured_plan(cfg):
+    cfg.risk.position_sizing = "equity"
+    cfg.risk.order_size_pct = 0.25
+    syms = ["AAA", "BBB", "CCC"]
+    ticks = interleave(*[ramp(s, 100.0, 0.0008, 30) for s in syms])
+    eng = build(cfg, syms, ticks)
+    run(eng)
+    deployed = sum(_notionals(eng, syms)) / cfg.broker.starting_cash
+    assert 0.60 < deployed < 0.80, f"expected ~75% deployed, got {deployed:.0%}"
 
 
 # -- exits -----------------------------------------------------------------

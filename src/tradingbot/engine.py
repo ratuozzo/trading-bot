@@ -74,7 +74,9 @@ class Engine:
         else:
             ref = tick.bid if tick.bid is not None else tick.price
 
-        notional = self.risk.order_notional(self.broker.cash)
+        notional = self.risk.order_notional(
+            self.broker.cash, 0, self._equity(tick)
+        )
         if notional <= 0:
             return
         fill = self.broker.open(tick.symbol, side, notional, ref, tick.timestamp)
