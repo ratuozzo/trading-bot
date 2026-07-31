@@ -22,30 +22,34 @@ class Portfolio:
     _open_price: float = 0.0
     _open_time: float = 0.0
     _open_fees: float = 0.0
+    _open_side: Side = Side.BUY   # BUY = long, SELL = short
 
-    def record_fill(self, fill: Fill) -> Optional[Trade]:
-        """Update state with a fill. Returns a completed Trade on a closing sell."""
-        if fill.side == Side.BUY:
-            # Weighted-average entry across adds (the scalper only adds flat->long).
-            total_qty = self._open_qty + fill.quantity
-            if total_qty > 0:
-                self._open_price = (
-                    self._open_price * self._open_qty + fill.price * fill.quantity
-                ) / total_qty
-            self._open_qty = total_qty
-            if self._open_time == 0.0:
-                self._open_time = fill.timestamp
-            self._open_fees += fill.fee
+    def record_fill(self, fill: Fill, opening: Optional[bool] = None) -> Optional[Trade]:
+        """Update state with a fill; returns a completed Trade on the close.
+
+        ``opening`` says whether this fill opens or closes a position. When
+        omitted it is inferred: flat means the fill opens, otherwise it closes.
+        That inference matters now that a position can be opened with a SELL
+        (a short), so side alone no longer tells us the direction of travel.
+        """
+        if opening is None:
+            opening = self._open_qty <= 0
+
+        if opening:
+            self._open_side = fill.side
+            self._open_qty = fill.quantity
+            self._open_price = fill.price
+            self._open_time = fill.timestamp
+            self._open_fees = fill.fee
             return None
 
-        # SELL closes (all or part of) the position.
         if self._open_qty <= 0:
             return None
         qty = min(fill.quantity, self._open_qty)
-        gross = (fill.price - self._open_price) * qty
-        entry_fee_share = self._open_fees * (qty / self._open_qty) if self._open_qty else 0.0
+        direction = -1 if self._open_side is Side.SELL else 1
+        gross = direction * (fill.price - self._open_price) * qty
+        entry_fee_share = self._open_fees * (qty / self._open_qty)
         fees = entry_fee_share + fill.fee
-        pnl = gross - fees
 
         trade = Trade(
             symbol=fill.symbol,
@@ -55,7 +59,8 @@ class Portfolio:
             entry_time=self._open_time,
             exit_time=fill.timestamp,
             fees=fees,
-            pnl=pnl,
+            pnl=gross - fees,
+            side=self._open_side,
         )
         self.trades.append(trade)
 
@@ -66,6 +71,7 @@ class Portfolio:
             self._open_price = 0.0
             self._open_time = 0.0
             self._open_fees = 0.0
+            self._open_side = Side.BUY
         return trade
 
     # -- stats -------------------------------------------------------------

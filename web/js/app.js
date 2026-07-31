@@ -5,8 +5,8 @@
 import { DEFAULTS, FEE_PRESETS, loadSettings, saveSettings } from './config.js';
 import { FEEDS, Feed, FeedRace } from './feeds.js';
 import { MomentumScalper, SIGNAL } from './strategy.js';
-import { PaperBroker, Portfolio, RiskManager } from './broker.js';
-import { LeadLagAnalyzer, roundTripCostBp } from './leadlag.js';
+import { PaperBroker, Portfolio, RiskManager, LONG, SHORT } from './broker.js';
+import { LeadLagAnalyzer, roundTripCostBp, breakEvenWinRate } from './leadlag.js';
 
 const $ = (id) => document.getElementById(id);
 const nowMs = () => performance.timeOrigin + performance.now();
@@ -108,23 +108,27 @@ function handleTick(tick) {
 
   const signal = strategy.onTick(
     { ...t, execPrice: fillPrice },
-    { inPosition: broker.inPosition, entryPrice: broker.avgEntry },
+    { dir: broker.dir, entryPrice: broker.avgEntry },
   );
 
-  if (signal.type === SIGNAL.ENTER_LONG && !broker.inPosition) {
+  const isEntry =
+    signal.type === SIGNAL.ENTER_LONG || signal.type === SIGNAL.ENTER_SHORT;
+
+  if (isEntry && !broker.inPosition) {
     const notional = risk.orderNotional(broker.cash);
     if (notional > 0) {
-      const fill = broker.buy(notional, fillPrice, t.ts);
+      const side = signal.type === SIGNAL.ENTER_SHORT ? SHORT : LONG;
+      const fill = broker.open(side, notional, fillPrice, t.ts);
       if (fill) {
         portfolio.recordFill(fill);
         strategy.noteEntry(t.ts);
         renderPosition();
       }
     }
-  } else if (signal.type === SIGNAL.EXIT_LONG && broker.inPosition) {
-    const fill = broker.sell(broker.qty, fillPrice, t.ts);
+  } else if (signal.type === SIGNAL.EXIT && broker.inPosition) {
+    const fill = broker.close(fillPrice, t.ts);
     if (fill) {
-      const trade = portfolio.recordFill(fill, signal.reason);
+      portfolio.recordFill(fill, signal.reason);
       strategy.noteExit(t.ts);
       risk.updateEquity(broker.equity(fillPrice));
       if (risk.halted) $('haltNotice').classList.remove('hidden');
@@ -177,20 +181,22 @@ function renderPrice() {
 function renderPosition() {
   const state = $('posState');
   const detail = $('posDetail');
+  const mark = execPrice ?? lastPrice;
   if (broker?.inPosition) {
-    state.textContent = 'LONG';
-    state.classList.add('long');
-    const u = lastPrice ? broker.unrealized(lastPrice) : 0;
+    state.textContent = broker.side;
+    state.classList.toggle('long', broker.side === LONG);
+    state.classList.toggle('short', broker.side === SHORT);
+    const u = mark ? broker.unrealized(mark) : 0;
     detail.textContent =
       `${broker.qty.toFixed(6)} @ ${fmtPrice(broker.avgEntry)}  ${fmtSigned(u)}`;
   } else {
     state.textContent = 'flat';
-    state.classList.remove('long');
+    state.classList.remove('long', 'short');
     detail.textContent = risk?.halted ? 'halted' : 'waiting for impulse';
   }
 
-  if (broker && lastPrice) {
-    const eq = broker.equity(lastPrice);
+  if (broker && mark) {
+    const eq = broker.equity(mark);
     $('equity').textContent = fmtMoney(eq);
     const diff = eq - broker.startingCash;
     const pctChange = (diff / broker.startingCash) * 100;
@@ -210,6 +216,31 @@ function renderStats() {
   const el = $('realized');
   el.textContent = portfolio.trades.length ? fmtSigned(r) : '—';
   el.style.color = r > 0 ? 'var(--up)' : r < 0 ? 'var(--down)' : '';
+
+  renderBreakEven();
+}
+
+/** The bar the strategy has to clear before it can make a cent. */
+function renderBreakEven() {
+  const be = breakEvenWinRate(settings.strategy, settings.broker);
+  const el = $('breakeven');
+
+  if (be.required === Infinity) {
+    el.textContent =
+      `A take-profit of ${(settings.strategy.takeProfit * 10000).toFixed(0)}bp ` +
+      `nets ${be.netWinBp.toFixed(1)}bp after ${be.costBp.toFixed(1)}bp of costs — ` +
+      `every winning trade still loses money. Raise take-profit or cut fees.`;
+    el.className = 'hint verdict-bad';
+    return;
+  }
+
+  const pct = be.required * 100;
+  el.textContent =
+    `Costs ${be.costBp.toFixed(1)}bp per round trip: a win nets ` +
+    `+${be.netWinBp.toFixed(1)}bp, a loss costs −${be.netLossBp.toFixed(1)}bp, ` +
+    `so this setup needs a ${pct.toFixed(0)}% win rate to break even.`;
+  el.className = pct >= 75 ? 'hint verdict-bad'
+    : pct >= 55 ? 'hint verdict-warn' : 'hint verdict-good';
 }
 
 function renderTrades() {
@@ -222,11 +253,15 @@ function renderTrades() {
     .slice(-25)
     .reverse()
     .map((t) => {
-      const pct = ((t.exitPrice - t.entryPrice) / t.entryPrice) * 100;
+      // Signed by direction, so a short that fell shows a positive move.
+      const d = t.side === SHORT ? -1 : 1;
+      const pct = ((d * (t.exitPrice - t.entryPrice)) / t.entryPrice) * 100;
       const held = ((t.exitTime - t.entryTime) / 1000).toFixed(1);
+      const tag = t.side === SHORT ? 'S' : 'L';
       return `<li>
         <div>
-          <div class="mono">${fmtPrice(t.entryPrice)} → ${fmtPrice(t.exitPrice)}</div>
+          <div class="mono"><span class="side ${t.side === SHORT ? 'short' : 'long'}"
+            >${tag}</span> ${fmtPrice(t.entryPrice)} → ${fmtPrice(t.exitPrice)}</div>
           <div class="trade-meta">${escapeHtml(t.reason)} · held ${held}s</div>
         </div>
         <div class="tpnl ${t.pnl >= 0 ? 'pos' : 'neg'}">
@@ -404,6 +439,10 @@ function buildSettingsUI() {
   });
   $('setFee').addEventListener('input', () => { $('setFeePreset').value = 'custom'; });
 
+  // Warn as soon as the venue is picked, not after Apply.
+  $('setExecFeed').addEventListener('change', updateSpotWarning);
+  $('setAllowShorts').addEventListener('change', updateSpotWarning);
+
   $('raceChecks').innerHTML = Object.entries(FEEDS)
     .map(([id, m]) => `<label><input type="checkbox" value="${id}" /> ${m.label}</label>`)
     .join('');
@@ -428,6 +467,13 @@ function buildSettingsUI() {
   $('resetLl').addEventListener('click', () => { leadlag.reset(); renderLeadLag(); });
 }
 
+/** Shorts on a spot venue are simulated but not actually placeable. */
+function updateSpotWarning() {
+  const isSpot = FEEDS[$('setExecFeed').value]?.spot;
+  const wantsShorts = $('setAllowShorts').checked;
+  $('spotShortWarning').classList.toggle('hidden', !(isSpot && wantsShorts));
+}
+
 function syncSettingsUI() {
   $('setBase').value = settings.base;
   $('setSignalFeed').value = settings.signalFeed;
@@ -439,8 +485,10 @@ function syncSettingsUI() {
   $('setLookback').value = settings.strategy.lookbackSeconds;
   $('setFee').value = settings.broker.feeBps;
   $('setCash').value = settings.broker.startingCash;
+  $('setAllowShorts').checked = !!settings.strategy.allowShorts;
   const match = FEE_PRESETS.find((p) => p.bps === settings.broker.feeBps);
   $('setFeePreset').value = match ? match.id : 'custom';
+  updateSpotWarning();
   document.querySelectorAll('#raceChecks input').forEach((cb) => {
     cb.checked = settings.racing.includes(cb.value);
   });
@@ -459,6 +507,7 @@ function readSettingsUI() {
   settings.racing = [...document.querySelectorAll('#raceChecks input')]
     .filter((cb) => cb.checked)
     .map((cb) => cb.value);
+  settings.strategy.allowShorts = $('setAllowShorts').checked;
   settings.strategy.entryThreshold = num('setEntry', 0.15) / 100;
   settings.strategy.takeProfit = num('setTp', 0.2) / 100;
   settings.strategy.stopLoss = num('setSl', 0.15) / 100;

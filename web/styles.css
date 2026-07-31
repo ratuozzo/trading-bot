@@ -124,6 +124,22 @@ main {
 
 .stat { font-size: 20px; font-weight: 650; margin-top: 6px; }
 .stat.long { color: var(--up); }
+.stat.short { color: var(--down); }
+
+/* L/S tag on each trade row */
+.side {
+  display: inline-block; width: 15px; text-align: center;
+  border-radius: 4px; font-size: 10px; font-weight: 700;
+  padding: 1px 0; margin-right: 4px; vertical-align: 1px;
+}
+.side.long { background: rgba(47,212,123,.16); color: var(--up); }
+.side.short { background: rgba(255,92,108,.16); color: var(--down); }
+
+.settings label.checkline {
+  flex-direction: row; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--fg);
+}
+.settings label.checkline input { width: auto; }
 
 /* ---------- feed race table ---------- */
 .feeds { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
@@ -140,7 +156,8 @@ main {
 
 .hint { font-size: 11.5px; color: var(--dim); line-height: 1.5; margin: 10px 0 0; }
 .verdict-good { color: var(--up); font-weight: 600; }
-.verdict-bad { color: var(--warn); font-weight: 600; }
+.verdict-warn { color: var(--warn); font-weight: 600; }
+.verdict-bad { color: var(--down); font-weight: 600; }
 
 /* lead-lag rows: does the follow-through clear the round trip? */
 .feeds tr.edge td { color: var(--up); }

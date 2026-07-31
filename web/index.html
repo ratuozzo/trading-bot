@@ -100,6 +100,7 @@
         <div><span class="dim">Win rate</span><b class="mono" id="winRate">—</b></div>
         <div><span class="dim">Realized</span><b class="mono" id="realized">—</b></div>
       </div>
+      <p class="hint" id="breakeven">—</p>
       <div id="haltNotice" class="halt hidden">Daily loss limit hit — entries halted.</div>
     </section>
 
@@ -126,6 +127,17 @@
 
       <label>Execution feed <span class="dim">— where fills are priced</span>
         <select id="setExecFeed"></select>
+      </label>
+      <p class="hint hidden" id="spotShortWarning">
+        Heads up: this is a <b>spot</b> venue, so shorts can't actually be
+        placed there without a margin account — the simulator will still take
+        them. Switch execution to a perp venue to trade both directions for
+        real (perps are cheaper too).
+      </p>
+
+      <label class="checkline">
+        <input type="checkbox" id="setAllowShorts" />
+        Trade downward impulses too (short)
       </label>
 
       <fieldset>

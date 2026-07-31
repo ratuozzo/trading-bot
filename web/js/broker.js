@@ -1,5 +1,17 @@
 // Paper broker + portfolio + risk — ports of the Python modules of the same
 // name. Simulated money only; nothing here can place a real order.
+//
+// Positions are directional: LONG profits when price rises, SHORT when it
+// falls. Cash accounting is deliberately uniform across both — on open the
+// notional is deducted (an outright purchase for a long, posted margin for a
+// short), and on close the notional comes back adjusted by the position's
+// P&L. That keeps one code path instead of two subtly different ones.
+
+export const LONG = 'LONG';
+export const SHORT = 'SHORT';
+
+/** +1 for a long, -1 for a short. */
+export const dirOf = (side) => (side === SHORT ? -1 : 1);
 
 export class PaperBroker {
   constructor({ startingCash, feeBps, slippageBps }) {
@@ -7,47 +19,67 @@ export class PaperBroker {
     this.cash = startingCash;
     this.feeRate = feeBps / 10000;
     this.slippageRate = slippageBps / 10000;
-    this.qty = 0;
+    this.qty = 0;          // always >= 0; direction lives in `side`
     this.avgEntry = 0;
+    this.side = null;
   }
 
   get inPosition() { return this.qty > 0; }
+  get dir() { return this.side ? dirOf(this.side) : 0; }
 
-  buy(quoteAmount, refPrice, ts) {
-    if (quoteAmount <= 0 || refPrice <= 0) return null;
+  /**
+   * Open a position worth roughly `quoteAmount`. Slippage always works
+   * against us: we buy a touch higher, sell a touch lower.
+   */
+  open(side, quoteAmount, refPrice, ts) {
+    if (this.inPosition || quoteAmount <= 0 || refPrice <= 0) return null;
     const spend = Math.min(quoteAmount, this.cash);
     if (spend <= 0) return null;
 
-    const price = refPrice * (1 + this.slippageRate);
+    const d = dirOf(side);
+    const price = refPrice * (1 + d * this.slippageRate);
     const qty = spend / (price * (1 + this.feeRate));
     const notional = qty * price;
     const fee = notional * this.feeRate;
 
     this.cash -= notional + fee;
-    const newQty = this.qty + qty;
-    this.avgEntry = newQty > 0
-      ? (this.avgEntry * this.qty + price * qty) / newQty
-      : 0;
-    this.qty = newQty;
-    return { side: 'BUY', qty, price, fee, ts };
+    this.qty = qty;
+    this.avgEntry = price;
+    this.side = side;
+    return { side, action: 'OPEN', qty, price, fee, ts };
   }
 
-  sell(quantity, refPrice, ts) {
-    if (this.qty <= 0 || refPrice <= 0) return null;
-    const qty = Math.min(quantity, this.qty);
-    const price = refPrice * (1 - this.slippageRate);
+  /** Close the whole position at ~refPrice. */
+  close(refPrice, ts) {
+    if (!this.inPosition || refPrice <= 0) return null;
+
+    const d = this.dir;
+    // Closing reverses the trade, so slippage flips sign too.
+    const price = refPrice * (1 - d * this.slippageRate);
+    const qty = this.qty;
     const notional = qty * price;
     const fee = notional * this.feeRate;
+    const pnl = d * (price - this.avgEntry) * qty;
 
-    this.cash += notional - fee;
-    this.qty -= qty;
-    if (this.qty <= 1e-12) { this.qty = 0; this.avgEntry = 0; }
-    return { side: 'SELL', qty, price, fee, ts };
+    // Return the notional put up at entry, adjusted by P&L, less the exit fee.
+    this.cash += qty * this.avgEntry + pnl - fee;
+
+    const fill = { side: this.side, action: 'CLOSE', qty, price, fee, ts };
+    this.qty = 0;
+    this.avgEntry = 0;
+    this.side = null;
+    return fill;
   }
 
-  equity(markPrice) { return this.cash + this.qty * markPrice; }
+  /** Signed P&L of the open position if marked at `markPrice`. */
   unrealized(markPrice) {
-    return this.qty > 0 ? (markPrice - this.avgEntry) * this.qty : 0;
+    if (!this.inPosition) return 0;
+    return this.dir * (markPrice - this.avgEntry) * this.qty;
+  }
+
+  equity(markPrice) {
+    if (!this.inPosition) return this.cash;
+    return this.cash + this.qty * this.avgEntry + this.unrealized(markPrice);
   }
 }
 
@@ -55,48 +87,39 @@ export class Portfolio {
   constructor(startingCash) {
     this.startingCash = startingCash;
     this.trades = [];
-    this._openQty = 0;
-    this._openPrice = 0;
-    this._openTime = 0;
-    this._openFees = 0;
+    this._open = null;
   }
 
   recordFill(fill, reason = '') {
-    if (fill.side === 'BUY') {
-      const total = this._openQty + fill.qty;
-      if (total > 0) {
-        this._openPrice =
-          (this._openPrice * this._openQty + fill.price * fill.qty) / total;
-      }
-      this._openQty = total;
-      if (this._openTime === 0) this._openTime = fill.ts;
-      this._openFees += fill.fee;
+    if (fill.action === 'OPEN') {
+      this._open = {
+        side: fill.side,
+        qty: fill.qty,
+        price: fill.price,
+        ts: fill.ts,
+        fee: fill.fee,
+      };
       return null;
     }
 
-    if (this._openQty <= 0) return null;
-    const qty = Math.min(fill.qty, this._openQty);
-    const gross = (fill.price - this._openPrice) * qty;
-    const entryFeeShare = this._openFees * (qty / this._openQty);
-    const fees = entryFeeShare + fill.fee;
+    if (!this._open) return null;
+    const o = this._open;
+    const d = dirOf(o.side);
+    const fees = o.fee + fill.fee;
 
     const trade = {
-      qty,
-      entryPrice: this._openPrice,
+      side: o.side,
+      qty: fill.qty,
+      entryPrice: o.price,
       exitPrice: fill.price,
-      entryTime: this._openTime,
+      entryTime: o.ts,
       exitTime: fill.ts,
       fees,
-      pnl: gross - fees,
+      pnl: d * (fill.price - o.price) * fill.qty - fees,
       reason,
     };
     this.trades.push(trade);
-
-    this._openQty -= qty;
-    this._openFees -= entryFeeShare;
-    if (this._openQty <= 1e-12) {
-      this._openQty = 0; this._openPrice = 0; this._openTime = 0; this._openFees = 0;
-    }
+    this._open = null;
     return trade;
   }
 

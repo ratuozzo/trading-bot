@@ -31,8 +31,8 @@ class MomentumScalper:
         self,
         tick: Tick,
         *,
-        in_position: bool,
-        entry_price: float,
+        dir: int = 0,
+        entry_price: float = 0.0,
         exec_price: float | None = None,
     ) -> Signal:
         """Decide on this tick.
@@ -45,14 +45,19 @@ class MomentumScalper:
         differ by basis, so measuring take-profit as (perp price vs spot entry)
         would be noise. Impulses come from the signal feed; profit and loss
         comes from the exec feed.
+
+        ``dir`` is +1 when long, -1 when short, 0 when flat.
         """
         self._push(tick)
 
-        if in_position:
-            return self._exit_decision(
-                tick, entry_price, tick.price if exec_price is None else exec_price
-            )
-        return self._entry_decision(tick)
+        if dir == 0:
+            return self._entry_decision(tick)
+        return self._exit_decision(
+            tick,
+            entry_price,
+            tick.price if exec_price is None else exec_price,
+            dir,
+        )
 
     # -- internals ---------------------------------------------------------
 
@@ -85,37 +90,43 @@ class MomentumScalper:
             return Signal(SignalType.HOLD, "warming up")
 
         ret = self._return_over(self.cfg.lookback_seconds, tick.timestamp, tick.price)
+        per = f"{self.cfg.lookback_seconds:g}s"
         if ret >= self.cfg.entry_threshold:
             return Signal(
-                SignalType.ENTER_LONG,
-                f"impulse +{ret * 100:.3f}% over {self.cfg.lookback_seconds:.0f}s",
+                SignalType.ENTER_LONG, f"impulse +{ret * 100:.3f}% over {per}"
+            )
+        if self.cfg.allow_shorts and ret <= -self.cfg.entry_threshold:
+            return Signal(
+                SignalType.ENTER_SHORT, f"impulse {ret * 100:.3f}% over {per}"
             )
         return Signal(SignalType.HOLD, f"no impulse ({ret * 100:+.3f}%)")
 
     def _exit_decision(
-        self, tick: Tick, entry_price: float, exec_price: float
+        self, tick: Tick, entry_price: float, exec_price: float, dir: int
     ) -> Signal:
         if entry_price <= 0:
             return Signal(SignalType.HOLD, "no entry price")
 
+        # Signed so positive always means "in profit", whichever way we face.
         # Take-profit and stop-loss are real money, so they read the exec venue.
-        change = (exec_price - entry_price) / entry_price
+        change = dir * (exec_price - entry_price) / entry_price
 
         if change >= self.cfg.take_profit:
-            return Signal(SignalType.EXIT_LONG, f"take profit +{change * 100:.3f}%")
+            return Signal(SignalType.EXIT, f"take profit +{change * 100:.3f}%")
         if change <= -self.cfg.stop_loss:
-            return Signal(SignalType.EXIT_LONG, f"stop loss {change * 100:.3f}%")
+            return Signal(SignalType.EXIT, f"stop loss {change * 100:.3f}%")
 
-        recent = self._return_over(self.cfg.reversal_window, tick.timestamp, tick.price)
+        # A reversal is momentum turning against the position, so it flips too.
+        recent = dir * self._return_over(
+            self.cfg.reversal_window, tick.timestamp, tick.price
+        )
         if recent <= -self.cfg.reversal_exit:
-            return Signal(
-                SignalType.EXIT_LONG, f"momentum reversal {recent * 100:.3f}%"
-            )
+            return Signal(SignalType.EXIT, f"momentum reversal {recent * 100:.3f}%")
 
         if self._entry_time is not None:
             held = tick.timestamp - self._entry_time
             if held >= self.cfg.max_hold_seconds:
-                return Signal(SignalType.EXIT_LONG, "max hold time reached")
+                return Signal(SignalType.EXIT, "max hold time reached")
 
         return Signal(SignalType.HOLD, f"holding ({change * 100:+.3f}%)")
 

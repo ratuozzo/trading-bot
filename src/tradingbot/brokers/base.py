@@ -10,10 +10,26 @@ from __future__ import annotations
 import abc
 from typing import Optional
 
-from ..models import Fill, Position
+from ..models import Fill, Position, Side
 
 
 class Broker(abc.ABC):
+    def open(
+        self,
+        symbol: str,
+        side: Side,
+        quote_amount: float,
+        ref_price: float,
+        timestamp: float,
+    ) -> Optional[Fill]:
+        """Open a directional position. Long-only brokers may route BUY to
+        :meth:`buy` and reject SELL."""
+        raise NotImplementedError
+
+    def close(self, symbol: str, ref_price: float, timestamp: float) -> Optional[Fill]:
+        """Close the whole open position for ``symbol``."""
+        raise NotImplementedError
+
     @abc.abstractmethod
     def buy(self, symbol: str, quote_amount: float, ref_price: float, timestamp: float) -> Optional[Fill]:
         """Spend ``quote_amount`` (e.g. USDT) buying ``symbol`` at ~``ref_price``.

@@ -1,10 +1,15 @@
 """Paper broker: simulates order execution with no real money.
 
-Fills happen instantly at the reference price adjusted for slippage, and a
-taker fee is charged on every fill. It tracks cash and a single position per
-symbol, which is all the momentum scalper needs. Because it implements the
-same :class:`Broker` interface as a live broker, the strategy and engine
-cannot tell the difference.
+Positions are directional: a long profits when price rises, a short when it
+falls. Cash accounting is uniform across both — on open the notional is
+deducted (an outright purchase for a long, posted margin for a short), and on
+close the notional returns adjusted by the position's P&L. One code path
+instead of two subtly different ones.
+
+Fills happen instantly at the reference price adjusted for slippage, which
+always works against us, and a taker fee is charged on every fill. Because it
+implements the same :class:`Broker` interface as a live broker, the strategy
+and engine cannot tell the difference.
 """
 
 from __future__ import annotations
@@ -38,57 +43,84 @@ class PaperBroker(Broker):
     def position(self, symbol: str) -> Position:
         return self._positions.get(symbol, Position(symbol=symbol))
 
-    def buy(
-        self, symbol: str, quote_amount: float, ref_price: float, timestamp: float
+    # -- opening / closing -------------------------------------------------
+
+    def open(
+        self,
+        symbol: str,
+        side: Side,
+        quote_amount: float,
+        ref_price: float,
+        timestamp: float,
     ) -> Optional[Fill]:
+        """Open a position worth roughly ``quote_amount`` in quote currency."""
         if quote_amount <= 0 or ref_price <= 0:
             return None
-        quote_amount = min(quote_amount, self._cash)
-        if quote_amount <= 0:
-            log.warning("buy rejected: no cash")
+        if self.position(symbol).is_open:
+            log.warning("open rejected: %s already has a position", symbol)
+            return None
+        spend = min(quote_amount, self._cash)
+        if spend <= 0:
+            log.warning("open rejected: no cash")
             return None
 
-        fill_price = ref_price * (1 + self.slippage_rate)  # pay a touch more
-        # quote_amount covers notional + fee, so solve for quantity.
-        quantity = quote_amount / (fill_price * (1 + self.fee_rate))
-        notional = quantity * fill_price
+        direction = -1 if side is Side.SELL else 1
+        price = ref_price * (1 + direction * self.slippage_rate)
+        quantity = spend / (price * (1 + self.fee_rate))
+        notional = quantity * price
         fee = notional * self.fee_rate
 
         self._cash -= notional + fee
-        pos = self._positions.get(symbol, Position(symbol=symbol))
-        new_qty = pos.quantity + quantity
-        pos.avg_entry_price = (
-            (pos.avg_entry_price * pos.quantity + fill_price * quantity) / new_qty
-            if new_qty > 0
-            else 0.0
+        self._positions[symbol] = Position(
+            symbol=symbol, quantity=quantity, avg_entry_price=price, side=side
         )
-        pos.quantity = new_qty
-        self._positions[symbol] = pos
+        return Fill(symbol, side, quantity, price, fee, timestamp)
 
-        return Fill(symbol, Side.BUY, quantity, fill_price, fee, timestamp)
+    def close(
+        self, symbol: str, ref_price: float, timestamp: float
+    ) -> Optional[Fill]:
+        """Close the whole position at ~``ref_price``."""
+        pos = self._positions.get(symbol)
+        if pos is None or not pos.is_open or ref_price <= 0:
+            return None
+
+        direction = pos.direction
+        # Closing reverses the trade, so slippage flips sign too.
+        price = ref_price * (1 - direction * self.slippage_rate)
+        quantity = pos.quantity
+        notional = quantity * price
+        fee = notional * self.fee_rate
+        pnl = direction * (price - pos.avg_entry_price) * quantity
+
+        # Return the notional put up at entry, adjusted by P&L, less exit fee.
+        self._cash += quantity * pos.avg_entry_price + pnl - fee
+
+        closing_side = Side.BUY if direction < 0 else Side.SELL
+        self._positions[symbol] = Position(symbol=symbol)
+        return Fill(symbol, closing_side, quantity, price, fee, timestamp)
+
+    # -- Broker interface --------------------------------------------------
+
+    def buy(
+        self, symbol: str, quote_amount: float, ref_price: float, timestamp: float
+    ) -> Optional[Fill]:
+        """Open a long (kept for the base interface)."""
+        return self.open(symbol, Side.BUY, quote_amount, ref_price, timestamp)
 
     def sell(
         self, symbol: str, quantity: float, ref_price: float, timestamp: float
     ) -> Optional[Fill]:
-        pos = self._positions.get(symbol)
-        if pos is None or pos.quantity <= 0 or ref_price <= 0:
-            return None
-        quantity = min(quantity, pos.quantity)
-
-        fill_price = ref_price * (1 - self.slippage_rate)  # receive a touch less
-        notional = quantity * fill_price
-        fee = notional * self.fee_rate
-
-        self._cash += notional - fee
-        pos.quantity -= quantity
-        if pos.quantity <= 1e-12:
-            pos.quantity = 0.0
-            pos.avg_entry_price = 0.0
-        self._positions[symbol] = pos
-
-        return Fill(symbol, Side.SELL, quantity, fill_price, fee, timestamp)
+        """Close an open long. ``quantity`` is accepted for interface
+        compatibility; the whole position is closed."""
+        return self.close(symbol, ref_price, timestamp)
 
     def equity(self, mark_price: float, symbol: str) -> float:
-        """Total account value = cash + position marked at ``mark_price``."""
+        """Total account value = cash + the open position marked to market."""
         pos = self.position(symbol)
-        return self._cash + pos.quantity * mark_price
+        if not pos.is_open:
+            return self._cash
+        return (
+            self._cash
+            + pos.quantity * pos.avg_entry_price
+            + pos.unrealized_pnl(mark_price)
+        )

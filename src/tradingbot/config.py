@@ -27,8 +27,11 @@ class FeedConfig:
 
 @dataclass
 class StrategyConfig:
+    # Shorter lookback = stricter velocity filter: the same threshold has to
+    # happen faster. Sub-second values are fine, and are where cascades live.
     lookback_seconds: float = 5.0      # window used to measure the impulse
-    entry_threshold: float = 0.0015    # +0.15% over the window triggers a long
+    allow_shorts: bool = True          # trade downward impulses as well as up
+    entry_threshold: float = 0.0015    # ±0.15% over the window triggers entry
     take_profit: float = 0.002         # exit at +0.20%
     stop_loss: float = 0.0015          # exit at -0.15%
     reversal_exit: float = 0.0008      # exit if momentum flips by 0.08% quickly

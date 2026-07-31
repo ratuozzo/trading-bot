@@ -21,13 +21,15 @@ export const SYMBOL_MAP = {
   coinbase: (b) => `${b.toUpperCase()}-USD`,
 };
 
+// `spot: true` venues cannot be shorted without a margin account — the bot
+// would have nothing to sell. Perps can be shorted directly, and are cheaper.
 export const FEEDS = {
-  'binance-futures': { label: 'Binance Perp', venue: 'Binance USD-M futures' },
-  'binance-spot': { label: 'Binance Spot', venue: 'Binance spot' },
-  bybit: { label: 'Bybit Perp', venue: 'Bybit linear perps' },
-  okx: { label: 'OKX Swap', venue: 'OKX perpetual swap' },
-  hyperliquid: { label: 'Hyperliquid', venue: 'Hyperliquid perps' },
-  coinbase: { label: 'Coinbase', venue: 'Coinbase spot' },
+  'binance-futures': { label: 'Binance Perp', venue: 'Binance USD-M futures', spot: false },
+  'binance-spot': { label: 'Binance Spot', venue: 'Binance spot', spot: true },
+  bybit: { label: 'Bybit Perp', venue: 'Bybit linear perps', spot: false },
+  okx: { label: 'OKX Swap', venue: 'OKX perpetual swap', spot: false },
+  hyperliquid: { label: 'Hyperliquid', venue: 'Hyperliquid perps', spot: false },
+  coinbase: { label: 'Coinbase', venue: 'Coinbase spot', spot: true },
 };
 
 /**

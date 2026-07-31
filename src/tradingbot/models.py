@@ -18,7 +18,8 @@ class Side(str, Enum):
 
 class SignalType(str, Enum):
     ENTER_LONG = "ENTER_LONG"
-    EXIT_LONG = "EXIT_LONG"
+    ENTER_SHORT = "ENTER_SHORT"
+    EXIT = "EXIT"
     HOLD = "HOLD"
 
 
@@ -75,18 +76,29 @@ class Fill:
 
 @dataclass
 class Position:
+    """An open position. ``quantity`` is always >= 0; direction lives in
+    ``side``, so a short is (side=SELL, quantity=1.0), not a negative size."""
+
     symbol: str
     quantity: float = 0.0
     avg_entry_price: float = 0.0
+    side: Optional[Side] = None
 
     @property
     def is_open(self) -> bool:
         return self.quantity > 0
 
+    @property
+    def direction(self) -> int:
+        """+1 long, -1 short, 0 flat."""
+        if not self.is_open or self.side is None:
+            return 0
+        return -1 if self.side is Side.SELL else 1
+
     def unrealized_pnl(self, price: float) -> float:
         if not self.is_open:
             return 0.0
-        return (price - self.avg_entry_price) * self.quantity
+        return self.direction * (price - self.avg_entry_price) * self.quantity
 
 
 @dataclass
@@ -101,12 +113,18 @@ class Trade:
     exit_time: float
     fees: float
     pnl: float
+    side: Side = Side.BUY   # BUY = the position was long, SELL = short
+
+    @property
+    def direction(self) -> int:
+        return -1 if self.side is Side.SELL else 1
 
     @property
     def return_pct(self) -> float:
+        """Signed by direction: a short that fell returns a positive number."""
         if self.entry_price == 0:
             return 0.0
-        return (self.exit_price - self.entry_price) / self.entry_price
+        return self.direction * (self.exit_price - self.entry_price) / self.entry_price
 
     @property
     def hold_seconds(self) -> float:

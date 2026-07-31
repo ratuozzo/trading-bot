@@ -17,8 +17,11 @@ export const DEFAULTS = {
   },
 
   strategy: {
+    // Shorter lookback = a stricter velocity filter: the same threshold has to
+    // happen faster. Sub-second values are fine and are where cascades live.
     lookbackSeconds: 5.0,
-    entryThreshold: 0.0015,   // +0.15% impulse to go long
+    allowShorts: true,        // trade impulses down as well as up
+    entryThreshold: 0.0015,   // ±0.15% impulse to enter
     takeProfit: 0.002,        // +0.20%
     stopLoss: 0.0015,         // -0.15%
     reversalExit: 0.0008,     // bail on a -0.08% flip

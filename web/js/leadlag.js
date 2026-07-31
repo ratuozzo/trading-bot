@@ -154,3 +154,31 @@ export class LeadLagAnalyzer {
 export function roundTripCostBp({ feeBps, slippageBps }) {
   return feeBps * 2 + slippageBps * 2;
 }
+
+/**
+ * The win rate the strategy must beat just to break even.
+ *
+ * Costs are asymmetric in a way that is easy to miss: they shrink every win
+ * and enlarge every loss. A take-profit of TP nets `TP - cost`, while a stop
+ * at SL loses `SL + cost`. Push TP too close to the cost and the required win
+ * rate runs away toward 100% — at which point no amount of signal quality
+ * saves the strategy.
+ *
+ * Entry slippage is already baked into the entry fill price (take-profit is
+ * measured from it), so the realised cost per round trip is 2x fee plus the
+ * single exit slippage — not 2x slippage.
+ */
+export function breakEvenWinRate({ takeProfit, stopLoss }, { feeBps, slippageBps }) {
+  const tpBp = takeProfit * 10000;
+  const slBp = stopLoss * 10000;
+  const costBp = 2 * feeBps + slippageBps;
+  const netWin = tpBp - costBp;
+  const netLoss = slBp + costBp;
+  return {
+    costBp,
+    netWinBp: netWin,
+    netLossBp: netLoss,
+    // Unreachable when a "winning" trade still nets a loss.
+    required: netWin <= 0 ? Infinity : netLoss / (netWin + netLoss),
+  };
+}
