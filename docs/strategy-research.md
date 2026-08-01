@@ -149,9 +149,51 @@ Buy when the lookback return is in the top third of its history.
 - Weekly rebalancing (Sharpe 0.24) beats daily (0.18) — turnover hurts
 - ~73 trades/yr → ~15% annual cost drag, which is heavy but not fatal
 
-### 3. Cross-sectional momentum / risk-managed variants
+### 3. Cross-sectional momentum — TESTED, the result is coin selection
 
-Rank coins, hold winners, rebalance weekly.
+Rank the universe by 28-day return, long the top third, short the bottom
+third, rebalance weekly, dollar-neutral (`scripts/backtest_xsmom.py`).
+
+The first run looked like the best result this project has produced: on 13
+large caps, **+352.9% over 6.2 years, Sharpe 1.01, and 5/5 walk-forward
+blocks positive**, with a −23% drawdown against buy-and-hold's −37% test
+loss. Market-neutrality appeared to be doing exactly what it promised.
+
+Then the same parameters ran on coins that had not been looked at:
+
+| Universe (28d rank / 7d hold, top&bottom third) | Return | Sharpe | Test Sharpe |
+| --- | ---: | ---: | ---: |
+| A — 13 large caps *(the set it was first run on)* | **+352.9%** | **1.01** | 0.68 |
+| A+B — 26 coins | +173.4% | 0.80 | 0.39 |
+| B — 13 mid-cap alts | +94.1% | 0.50 | **-1.01** |
+| C — 17 older small caps | **-90.3%** | **-0.98** | -0.17 |
+| **A+B+C — all 43 coins** | **+17.5%** | **0.23** | 0.32 |
+
+Identical rules, identical dates, identical costs. Sharpe swings from +1.01
+to −0.98 on nothing but the choice of coins. **That is not an edge, it is a
+coin-selection lottery** — and the winning ticket happened to be the set
+looked at first, which is exactly how this failure mode always presents.
+
+On the realistic universe — rank across everything liquid, all 43 coins —
+the strategy returns **+17.5% over 6.2 years, about 2.6%/yr**, against a
+3.5%/yr cost drag and a T-bill at 4-5%. Gross of costs it earns ~6%/yr, so
+here fees are roughly half the problem rather than all of it or none of it.
+
+The small-cap collapse is not a data artifact. Every daily move above 60% in
+the panel was checked and they are real events (DOGE's +387% in January 2021,
+XRP on the Ripple ruling, ALGO in November 2021). The short leg on small caps
+gets squeezed by genuine moves, which is a real risk of the trade, not a bug
+in the backtest.
+
+Two parameter notes, both reported rather than acted on. A 40-cell sweep
+favoured a shorter 14d rank with a 7d hold (test Sharpe 1.34 on the combined
+26). On the 17 coins never used to find it, that variant returned **-55.6%**.
+And a long-only version of the same ranking gives up almost everything
+out-of-sample (Sharpe 0.02 vs 0.68), which does support the underlying
+theory: subtracting the common "all coins move together" factor is the part
+that works. It just is not worth enough to pay for.
+
+### 3b. Cross-sectional momentum — the original literature claim
 
 - Risk-managed weekly portfolio: 3.47% average weekly return vs 3.18%
   conventional, with *lower* volatility (17.66% vs 20.44%)
@@ -191,35 +233,46 @@ understanding and no progress in P&L.
 
 Scorecard so far, all measured rather than assumed:
 
-| Strategy | Turnover | Blocked by |
-| --- | ---: | --- |
-| Tick momentum (2s) | ~41/day | cost |
-| Elder Impulse (5m/1h/4h) | 3-41/day | cost |
-| Funding carry | ~monthly | yields less than T-bills |
-| Time-series momentum 28d/5d | 23/yr | no out-of-sample signal |
+| Strategy | Turnover | Net result | Blocked by |
+| --- | ---: | ---: | --- |
+| Tick momentum (2s) | ~41/day | negative | cost |
+| Elder Impulse (5m/1h/4h) | 3-41/day | negative | cost |
+| Funding carry | ~monthly | +1.7-2.8%/yr | yields less than T-bills |
+| Time-series momentum 28d/5d | 23/yr | -1.3%/yr | no out-of-sample signal |
+| Cross-sectional momentum | 35/yr | +2.6%/yr | universe-dependent, below cash |
 
-Two methodological rules earned the hard way, worth keeping for anything
+Nothing tested has beaten a Treasury bill. Two of the five now clear their
+own transaction costs, which the first three never did — the failures moved
+from arithmetic to genuine absence of signal.
+
+Three methodological rules earned the hard way, worth keeping for anything
 tested next:
 
 1. **Hold out coins, not just dates.** A single train/test split did not
    catch the 90d/5d variant; 13 unseen coins did, and reversed its sign.
-2. **Do not score the warm-up.** Including days when a rule structurally
+   Cross-sectional momentum needed a *third* coin set before it broke.
+2. **Report the universe as a parameter.** Coin choice moved cross-sectional
+   Sharpe from +1.01 to -0.98 with nothing else changed. A backtest that
+   names its parameters but not its universe has hidden its biggest one.
+3. **Do not score the warm-up.** Including days when a rule structurally
    cannot fire reports it as "flat", which flatters it in a crash. Fixing
-   this moved the headline result from +120% to -6.7%.
+   this moved the time-series headline from +120% to -6.7%.
 
-Remaining candidates, and what would have to be true for each:
+Remaining untested candidates:
 
-1. **Cross-sectional momentum** — same data and fetcher, ranks across coins
-   instead of against a coin's own history. The one real reason to expect
-   something different: it is market-neutral by construction, so it does not
-   need the direction call that just failed twice.
-2. **Size / volume factor portfolios** — lowest turnover in the literature;
-   needs the volume field the strategy currently discards.
-3. **Cost-aware execution filter** — not a strategy, a gate. Only useful
-   bolted onto something that already has a signal.
+- **Size / volume factor portfolios** — lowest turnover in the literature;
+  needs the volume field the strategy currently discards. Note the warning
+  above applies with full force: a size factor *is* a statement about the
+  universe, and the universe is what just failed.
+- **Cost-aware execution filter** — not a strategy, a gate. Only useful
+  bolted onto something that already has a signal, and nothing tested has one.
 
-Given the scorecard, the honest prior on #1 is low. It is cheap to test
-(hours, on data already downloaded), which is the only reason to test it.
+The more informative finding is not on this list. Across five strategies the
+binding constraint moved from cost to signal, and the best honest result is
+~2.6%/yr against a 4-5% risk-free rate. On this venue, at 8bp API taker, the
+largest single lever left is **the fee tier itself** — the MEXC app charges
+0.01% where the API charges 0.08%. That is an 8x difference on the one input
+that has killed more of these tests than any signal choice.
 
 ## Sources
 
