@@ -116,9 +116,74 @@ def train_model(path: str):
     return (w, b, mu, sd)
 
 
+def resolve(path: str) -> int:
+    """Score a capture file against what actually happened.
+
+    Two things the live loop cannot know and this pass supplies:
+
+    1. The outcome. Without it the capture is just a log of opinions.
+    2. Which side to buy. If the book is skewed to UP and our model is
+       below it, the trade is to buy DOWN — priced at roughly 1 minus the
+       UP bid. Only comparing our forecast against the UP ask would score
+       a trade nobody would place.
+    """
+    import binary_edge as be
+    rows = [json.loads(l) for l in open(path) if l.strip()]
+    if not rows:
+        print("empty capture", file=sys.stderr)
+        return 1
+
+    by_coin = {}
+    for r in rows:
+        by_coin.setdefault(r["coin"], []).append(r)
+
+    print(f"  {'window':>7}{'P(up)':>8}{'mkt mid':>9}{'side':>6}{'pay':>7}"
+          f"{'need':>8}{'we say':>8}{'edge':>8}{'result':>8}{'pnl':>8}")
+    staked = pnl = 0.0
+    bets = 0
+    for coin, rs in by_coin.items():
+        lo = min(r["window"] for r in rs) - 600
+        hi = max(r["window"] for r in rs) + 900
+        d = get(f"{MEXC}/{SYMBOLS[coin]}?interval=Min5&start={lo}&end={hi}")
+        d = d.get("data") or {}
+        out = {d["time"][i]: (float(d["close"][i]) > float(d["open"][i]))
+               for i in range(len(d.get("time") or []))}
+
+        for r in rs:
+            up = out.get(r["window"])
+            if up is None:
+                continue
+            q = r["forecast"]
+            mid = (r["bid"] + r["ask"]) / 2
+            # Take the side our forecast disagrees with the market about.
+            if q >= mid:
+                side, pay, ours = "UP", r["ask"], q
+            else:
+                side, pay, ours = "DOWN", round(1.0 - r["bid"], 4), 1.0 - q
+            need = pay + be.taker_fee(pay)
+            edge = (ours - need) * 100
+            won = (side == "UP") == bool(up)
+            bets += 1
+            staked += need
+            got = (1.0 - need) if won else -need
+            pnl += got
+            print(f"  {time.strftime('%H:%M', time.gmtime(r['window'])):>7}"
+                  f"{q:>8.3f}{mid:>9.3f}{side:>6}{pay:>7.2f}{need*100:>7.1f}%"
+                  f"{ours*100:>7.1f}%{edge:>+7.1f}pp"
+                  f"{'up' if up else 'down':>8}{got:>+8.3f}")
+
+    if bets:
+        print(f"\n  {bets} bets, staked {staked:.2f} per $1 unit, "
+              f"P&L {pnl:+.3f} = {pnl/staked*100:+.1f}%")
+        print("  A handful of windows is noise. This needs hundreds.")
+    return 0
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--resolve", metavar="FILE",
+                   help="score an existing capture file and exit")
     p.add_argument("--minutes", type=float, default=60.0)
     p.add_argument("--coin", default="btc", choices=sorted(SYMBOLS))
     p.add_argument("--train", default="klines/m5/BTC_USDT_Min5.json")
@@ -127,6 +192,9 @@ def main() -> int:
                    help="poll this long after the window opens, to imitate "
                         "a realistic round trip rather than a perfect one")
     args = p.parse_args()
+
+    if args.resolve:
+        return resolve(args.resolve)
 
     print(f"training on {args.train} ...", file=sys.stderr)
     model = train_model(args.train)
