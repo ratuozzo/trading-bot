@@ -199,6 +199,76 @@ that works. It just is not worth enough to pay for.
   conventional, with *lower* volatility (17.66% vs 20.44%)
 - ~52 trades/yr → ~10% cost drag
 
+### 3c. Polymarket 5-minute binaries — TESTED, the signal is real and unreachable
+
+The most interesting result in this file, and still a no.
+
+**Why binaries looked promising.** Every strategy above died because a weak
+directional edge cannot pay a linear cost. A binary payoff breaks that link:
+being right 55% of the time pays the same whether the move was 2bp or 200bp.
+A signal too small to monetise on a perp can, in principle, monetise here.
+
+**The fee claim is out of date.** Polymarket's zero-fee era ended in January
+2026 for crypto. The crypto up/down taker fee is `shares x 0.07 x p x (1-p)`,
+which *peaks exactly at 50c* — the price at which every 5-minute window
+opens. Verified against the live order book (spread 1c, ~$5-16k liquidity):
+
+| | at a 50c entry |
+| --- | ---: |
+| taker fee | 1.75c/share = **3.50% of stake** |
+| half spread | 0.50c = 1.00% of stake |
+| **break-even accuracy** | **52.75%** |
+
+For scale, 3.5% of stake is ~44x MEXC's 8bp taker. Makers pay zero.
+
+**The signal is real.** A logistic regression on lagged returns, volatility,
+volume and time-of-day, betting only the top 10% most confident calls,
+expanding-window retrained per block (`scripts/binary_edge.py`):
+
+| Coin, 361 days of 5m candles | Blocks clearing 52.75% | Typical edge |
+| --- | ---: | ---: |
+| BTC | 7/8 | +1.0 to +4.8pp |
+| ETH | **8/8** | +0.2 to +5.5pp |
+| SOL | **8/8** | +0.6 to +6.8pp |
+
+23 of 24 walk-forward blocks profitable, no train/test gap. After five
+strategies that fell apart out of sample, this one does not.
+
+**What kills it: the edge is worth one second.** A 5-minute up/down contract
+is a digital option struck at spot, so at window open the fair price sits on
+the steepest part of the curve:
+
+    dP/dS = phi(0) / sigma  =  0.3989 / 14.06bp  =  2.84pp per basis point
+
+BTC's 5-minute sigma is 14bp, so **the fair price moves 2.8 percentage
+points for every 1bp the underlying ticks**. A +2.35pp edge is therefore
+worth 0.83bp of BTC movement — about **one second** of drift.
+
+The volatility term cancels: latency budget = `300 x (edge/39.89)^2` seconds,
+independent of the coin. BTC, ETH and SOL all give ~1.0s. A bigger edge is
+the only thing that buys time, and 2-3pp is what a year of data supports.
+
+So the trade requires submitting inside one second of the window opening,
+against market makers co-located with the CLOB, while being the taker paying
+3.5%. That is a latency race, not a forecasting edge — which matches the
+independent observation that these markets carry "a structural edge for
+automated participants that individual traders cannot realistically
+overcome".
+
+**Access.** Spain's regulator ordered ISPs to block Polymarket and Kalshi in
+May 2026 as unlicensed betting. Separately, ESMA/CNMV have prohibited binary
+options for EU retail clients since 2018. This is a legal restriction in the
+user's jurisdiction, not a terms-of-service detail.
+
+The finding worth keeping is the first one: **a binary payoff converts a weak
+directional edge into a fixed return.** Our 5-minute signal is genuine and
+survives walk-forward on three coins. It is unmonetisable on a perp (55%
+accuracy on a 5.7bp median move earns ~0.6bp gross against 20bp of cost) and
+unreachable on a binary (one-second latency budget). If a venue ever offers a
+binary-like payoff at maker fees on a slower clock — hourly rather than
+5-minute — the same measurement is worth re-running, because the latency
+budget scales with the square of the edge and the horizon.
+
 ### 4. Size and volume factor portfolios
 
 Reported to survive costs at **10-16% weekly turnover** — the lowest-turnover
@@ -240,6 +310,7 @@ Scorecard so far, all measured rather than assumed:
 | Funding carry | ~monthly | +1.7-2.8%/yr | yields less than T-bills |
 | Time-series momentum 28d/5d | 23/yr | -1.3%/yr | no out-of-sample signal |
 | Cross-sectional momentum | 35/yr | +2.6%/yr | universe-dependent, below cash |
+| Polymarket 5m binaries | ~28/day | n/a | 1-second latency budget; blocked in ES |
 
 Nothing tested has beaten a Treasury bill. Two of the five now clear their
 own transaction costs, which the first three never did — the failures moved
