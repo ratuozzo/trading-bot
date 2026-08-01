@@ -265,13 +265,33 @@ At ~29 bets/day on the top decile that caps the whole strategy at roughly
 $100-200/day gross before competition, on a venue where any faster
 participant takes the stale quote first.
 
-**And the assumption underneath it all is untested.** The edge is measured
-against a 50c quote. It only exists if the book is still near 50/51 at window
-open *regardless of recent price action*. If the makers skew on the same
-short-horizon momentum the model uses, there is nothing to collect.
-`scripts/capture_polymarket.py` records forecast, quote and outcome per
-window to settle it; correlation near zero means the signal is genuinely
-absent from the quote, near +1 means it never existed.
+**And the assumption underneath it all is false.** The edge was measured
+against a 50c quote, which only exists if the book sits near 50/51 at window
+open. Captured live (`scripts/capture_polymarket.py`), sampled ~1s in:
+
+| Window | Our P(up) | Market mid | Side taken | Result |
+| --- | ---: | ---: | :-- | :-- |
+| 11:50 | 0.483 | 0.535 | DOWN @0.47 | down |
+| 11:55 | 0.503 | 0.585 | DOWN @0.42 | up |
+| 12:00 | 0.497 | 0.635 | DOWN @0.40 | up |
+| 12:05 | 0.448 | 0.475 | DOWN @0.53 | up |
+| 12:10 | 0.465 | 0.465 | UP @0.47 | down |
+| 12:15 | 0.472 | **0.675** | DOWN @0.33 | up |
+
+**The book is skewed on every window** — mean absolute deviation from 50c is
+8.2pp, up to 17.5pp. A 17.5pp skew is ~6bp of underlying, far beyond what a
+second of drift explains, so the makers are pricing information the model
+does not have. The model reads 5-minute candles; the maker reads live spot.
+
+Over these six the market called direction 4/6 and the model 1/6. Six
+windows is noise and the -63% is not evidence. What is not noise is the
+shape: **the model's apparent edge was largest exactly where it was most
+wrong** (+18.3pp on the 0.675 window, which resolved against it). An edge
+that grows with disagreement against a better-informed quote is the
+signature of adverse selection, not alpha.
+
+Run `--minutes 1440` then `--resolve` for a real sample. The structural
+finding already stands: there is no 50c coin flip to buy.
 
 **Access.** Spain's regulator ordered ISPs to block Polymarket and Kalshi in
 May 2026 as unlicensed betting. Separately, ESMA/CNMV have prohibited binary
