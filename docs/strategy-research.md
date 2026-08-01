@@ -47,7 +47,43 @@ at +231% in-sample and -71% out-of-sample from identical rules.
 
 Ordered by how well the cost structure fits this repo.
 
-### 1. Funding-rate carry (delta-neutral)
+### 1. Funding-rate carry (delta-neutral) — TESTED, does not clear the bar
+
+**Measured on MEXC over 540 days of real settlements. The public figures are
+roughly an order of magnitude too high for this venue.**
+
+| | BTC | ETH | SOL |
+| --- | ---: | ---: | ---: |
+| Mean funding per 8h | +0.0033% | +0.0026% | **-0.0002%** |
+| Gross annualised | +3.6% | +2.9% | **-0.3%** |
+| Settlements positive | 78% | 73% | 57% |
+| Break-even hold | 27 days | 33 days | never |
+| 30-day windows clearing cost | 60% | 49% | 24% |
+| Worst negative run | -0.46% | -0.64% | -2.62% |
+
+And that is return on *notional*. Carry funds two legs, so return on capital
+is lower again:
+
+| Perp leg leverage | Capital for $10k notional | Return on capital |
+| --- | ---: | ---: |
+| none | $20,000 | **1.65%/yr** |
+| 3x | $13,333 | 2.47%/yr |
+| 5x | $12,000 | 2.75%/yr |
+
+US T-bills pay ~4-5% with no counterparty risk, no liquidation risk, and no
+funds sitting on an offshore exchange. On MEXC's current funding regime the
+carry loses to cash.
+
+A conditional version — only entering when funding spikes — does not rescue
+it either: over 540 days, funding on BTC and ETH **never once** exceeded
+0.01% per 8h, and the three SOL triggers netted -0.06% of notional.
+
+The strategy is not broken; MEXC's funding is simply too low right now. The
+quoted 10-30% APY describes leverage-mania conditions, and this 540-day
+window contains none of them. Worth re-measuring if funding regimes change —
+`scripts/funding_analysis.py` re-runs the whole check in a minute.
+
+### 1b. Funding-rate carry — the original literature claim
 
 Long spot, short the perp when funding is positive; collect the 8-hourly
 funding payment. **Not a directional bet** — it's a carry trade, so the cost
