@@ -27,3 +27,4 @@ secrets.yaml
 # Market data — re-downloadable with scripts/fetch_klines.py
 klines/
 ticks*.json
+polymarket_capture*.jsonl

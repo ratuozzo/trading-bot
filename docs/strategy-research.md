@@ -234,26 +234,44 @@ expanding-window retrained per block (`scripts/binary_edge.py`):
 23 of 24 walk-forward blocks profitable, no train/test gap. After five
 strategies that fell apart out of sample, this one does not.
 
-**What kills it: the edge is worth one second.** A 5-minute up/down contract
-is a digital option struck at spot, so at window open the fair price sits on
-the steepest part of the curve:
+**Latency: a decay, not a cliff.** A 5-minute up/down contract is a digital
+option struck at spot, so at window open the fair price sits on the steepest
+part of the curve:
 
     dP/dS = phi(0) / sigma  =  0.3989 / 14.06bp  =  2.84pp per basis point
 
-BTC's 5-minute sigma is 14bp, so **the fair price moves 2.8 percentage
-points for every 1bp the underlying ticks**. A +2.35pp edge is therefore
-worth 0.83bp of BTC movement — about **one second** of drift.
+Latency costs money through *adverse selection*: a quote you shoot at is
+pulled when it moves your way and left standing when it moves against you,
+so conditional on a fill you overpaid by about `0.3989 x s`.
 
-The volatility term cancels: latency budget = `300 x (edge/39.89)^2` seconds,
-independent of the coin. BTC, ETH and SOL all give ~1.0s. A bigger edge is
-the only thing that buys time, and 2-3pp is what a year of data supports.
+| Flight time | Fair-price sd | Adverse selection | Edge left |
+| --- | ---: | ---: | ---: |
+| 0.1s | 0.73pp | 0.29pp | 2.06pp |
+| 0.3s | 1.26pp | 0.50pp | **1.85pp** |
+| 1.0s | 2.30pp | 0.92pp | 1.43pp |
+| 5.0s | 5.15pp | 2.05pp | 0.30pp |
+| **break-even** | | | **6.5s** |
 
-So the trade requires submitting inside one second of the window opening,
-against market makers co-located with the CLOB, while being the taker paying
-3.5%. That is a latency race, not a forecasting edge — which matches the
-independent observation that these markets carry "a structural edge for
-automated participants that individual traders cannot realistically
-overcome".
+Measured round trip to the CLOB from a US datacenter is ~150ms, so a
+read-plus-signed-POST is ~300ms and keeps ~79% of the edge. **An earlier
+version of this section claimed the budget was ~1 second by comparing the
+edge to a one-standard-deviation move; that understates it about 6x.**
+Latency is not what blocks this.
+
+**What does block it: depth.** Measured on the live book, the best ask holds
+**$29-200**, and only **$222-611** sits within 2c — and 2c is the entire
+edge. Position size is capped in the low hundreds of dollars per window.
+At ~29 bets/day on the top decile that caps the whole strategy at roughly
+$100-200/day gross before competition, on a venue where any faster
+participant takes the stale quote first.
+
+**And the assumption underneath it all is untested.** The edge is measured
+against a 50c quote. It only exists if the book is still near 50/51 at window
+open *regardless of recent price action*. If the makers skew on the same
+short-horizon momentum the model uses, there is nothing to collect.
+`scripts/capture_polymarket.py` records forecast, quote and outcome per
+window to settle it; correlation near zero means the signal is genuinely
+absent from the quote, near +1 means it never existed.
 
 **Access.** Spain's regulator ordered ISPs to block Polymarket and Kalshi in
 May 2026 as unlicensed betting. Separately, ESMA/CNMV have prohibited binary

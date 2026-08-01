@@ -201,34 +201,42 @@ def walk_forward(candles, blocks: int, bar: float, top: float) -> None:
 
 
 def latency_budget(candles, edge_pp: float) -> None:
-    """How long an edge over the opening quote survives.
+    """How much of an edge over the opening quote survives a slow fill.
 
-    A 5-minute up/down contract is a digital option. At window open the
-    strike equals spot, so the fair probability sits on the steepest part of
-    the curve: dP/dS = phi(0)/sigma. Crypto's 5-minute sigma is ~14bp, which
-    makes the fair price move ~2.8 percentage points for every basis point
-    the underlying ticks.
+    A 5-minute up/down contract is a digital option struck at spot, so at
+    window open the fair probability sits on the steepest part of the curve:
+    dP/dS = phi(0)/sigma. Crypto's 5-minute sigma is ~14bp, so the fair price
+    moves ~2.8 percentage points for every basis point the underlying ticks.
 
-    That is the number that decides whether a forecasting edge is tradeable.
-    An edge measured against a 50c quote is only collectable while the quote
-    is still 50c, and the quote is a function of spot.
+    Latency costs money through *adverse selection*, not through noise. A
+    resting quote you are shooting at gets pulled when it moves in your
+    favour and stays put when it moves against you, so conditional on being
+    filled you paid too much. For a normal move of standard deviation s the
+    expected damage is E[|Z|]/2 = 0.3989 * s.
+
+    Note this is a decay, not a cliff. Comparing the edge to a one-standard-
+    deviation move (as an earlier version of this did) understates the
+    tolerable latency by roughly 6x.
     """
     r = [(b["c"] / a["c"] - 1.0) for a, b in zip(candles, candles[1:])
          if a["c"] > 0]
     sig = statistics.pstdev(r) * 10000
-    dP = 0.3989 / sig                      # probability per bp, at the money
+    dP = 0.3989 / sig * 100                # pp of probability per bp of spot
 
     print(f"\nLATENCY BUDGET  (5-min sigma {sig:.2f}bp)")
-    print(f"  fair price moves {dP*100:.2f}pp per 1bp of underlying\n")
-    print(f"  {'latency':>9}{'drift (1 sd)':>16}{'price moves':>15}")
-    for t in (0.5, 1, 2, 5, 10, 30):
-        s = sig * math.sqrt(t / 300.0)
-        print(f"  {t:>7.1f}s{s:>13.2f}bp{dP*s*100:>13.2f}pp")
+    print(f"  fair price moves {dP:.2f}pp per 1bp of underlying")
+    print(f"  measured edge    {edge_pp:+.2f}pp over the all-in break-even\n")
+    print(f"  {'flight':>9}{'price sd':>12}{'adverse sel':>14}{'edge left':>12}")
+    for t in (0.05, 0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 5.0, 10.0):
+        s = dP * sig * math.sqrt(t / 300.0)
+        adv = 0.3989 * s
+        left = edge_pp - adv
+        mark = "" if left > 0 else "   <-- gone"
+        print(f"  {t:>7.2f}s{s:>10.2f}pp{adv:>13.2f}pp{left:>11.2f}pp{mark}")
 
-    bp = edge_pp / (dP * 100)
-    secs = 300 * (bp / sig) ** 2
-    print(f"\n  a {edge_pp:+.2f}pp edge is worth {bp:.2f}bp of movement")
-    print(f"  => it is gone after roughly {secs:.1f}s of latency")
+    secs = 300 * ((edge_pp / 0.3989) / (dP * sig)) ** 2
+    print(f"\n  break-even flight time: {secs:.2f}s")
+    print("  (sigma cancels, so this depends on the edge alone, not the coin)")
 
 
 def main() -> int:
