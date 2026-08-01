@@ -218,7 +218,7 @@ def main() -> int:
         paths.extend(sorted(glob.glob(f)) or [f])
 
     cost = 2 * args.fee_bps + 2 * args.slippage_bps
-    print(f"Elder Impulse on 5m candles — round trip ~{cost:.0f}bp"
+    print(f"Elder Impulse — round trip ~{cost:.0f}bp"
           f"{' (long only)' if args.long_only else ''}\n")
 
     for path in paths:
@@ -232,7 +232,8 @@ def main() -> int:
             print(f"{path}: too few candles", file=sys.stderr)
             continue
 
-        name = path.split("/")[-1].replace("_Min5.json", "")
+        base = path.split("/")[-1].replace(".json", "")
+        name = base
         split = int(len(candles) * args.train_frac)
         days = (candles[-1]["t"] - candles[0]["t"]) / 86400
         print(f"{name}  ({len(candles):,} candles, {days:.0f} days)")
