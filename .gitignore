@@ -23,3 +23,7 @@ secrets.yaml
 .DS_Store
 .idea/
 .vscode/
+
+# Market data — re-downloadable with scripts/fetch_klines.py
+klines/
+ticks*.json

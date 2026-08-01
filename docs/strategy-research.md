@@ -103,7 +103,45 @@ this repo has already built.
 MEXC has both spot and perps, so this is implementable on the venue we're
 already on.
 
-### 2. Time-series momentum at multi-week horizons
+### 2. Time-series momentum (28d/5d) — TESTED, does not reproduce
+
+**The first strategy here whose failure is not about fees.** Tested on 26
+coins over 6.2 years of daily candles (`scripts/backtest_tsmom.py`), with
+warm-up excluded from scoring and every signal executed at the *next* open.
+
+Turnover came in far below the estimate — 23 trades/yr, not 73, because a
+5-day hold usually re-confirms rather than flips. That is ~2%/yr of cost
+drag, entirely survivable. The strategy still lost money:
+
+| Equal-weight portfolio, 5.2 yrs scored | Return | Sharpe | vs buy&hold |
+| --- | ---: | ---: | ---: |
+| 28d/5d, original 13 coins | **-6.7%** | 0.21 | bh -35.6%, Sharpe 0.23 |
+| 28d/5d, holdout 13 coins | **-17.9%** | 0.22 | bh -90.3%, Sharpe -0.17 |
+
+The published Sharpe 1.51 does not appear. What does appear is 0.2 — the
+same risk-adjusted return as buy-and-hold, reached by a much more
+complicated route.
+
+**Costs are not the binding constraint.** Re-run at zero fees and zero
+slippage, out-of-sample Sharpe moves from -0.03 to +0.03. The turnover
+filter did its job; the signal simply is not there.
+
+**Walk-forward says regime, not edge.** Five sequential ~15-month blocks
+with parameters held fixed: 3/5 positive Sharpe on the original coins, 3/5
+on the holdout. That is a coin flip.
+
+**A better-looking variant was selection noise.** A 25-cell sweep over
+lookback and hold put 90d/5d well ahead (4/5 blocks positive, +28.8% where
+28d/5d lost). On 13 coins never used to find it, it returned **-48.2%**
+(Sharpe 0.05). Picking the best of ~30 variants and calling it an edge is
+overfitting the test set instead of the training set; the holdout is what
+catches it.
+
+The one durable property: it *does* cut drawdowns and beat buy-and-hold's
+Sharpe in falling markets (holdout -17.9% against -90.3%). That is real, and
+it is worth nothing on its own — a strategy returning -7% is beaten by cash.
+
+### 2b. Time-series momentum — the original literature claim
 
 Buy when the lookback return is in the top third of its history.
 
@@ -141,17 +179,47 @@ difference is using it to *gate entries*, not just to report a bar.
 
 ## What this implies for us
 
-The three tested-and-failed strategies here all shared one property: high
-turnover. The survivors all share the opposite. Any next attempt should be
-chosen on turnover first and signal second.
+The original theory was that turnover was the whole problem. Testing changed
+that conclusion in a way worth recording.
 
-Reproduction order, easiest and most cost-robust first:
+**Cost was the binding constraint for the high-turnover strategies, and it is
+not the binding constraint any more.** The 5-minute impulse needed to clear
+2993%/yr and never could. Time-series momentum only needed to clear ~2%/yr —
+and still lost, at zero fees too. Lowering turnover moved the failure from
+"the fee eats it" to "there is nothing to eat", which is progress in
+understanding and no progress in P&L.
 
-1. **Funding carry** — needs a funding-rate feed, no directional forecast at
-   all, and the cost structure genuinely inverts
-2. **28d/5d time-series momentum** — reuses the existing kline fetcher and
-   backtester almost unchanged
-3. **Cross-sectional momentum** — same data, ranks across coins
+Scorecard so far, all measured rather than assumed:
+
+| Strategy | Turnover | Blocked by |
+| --- | ---: | --- |
+| Tick momentum (2s) | ~41/day | cost |
+| Elder Impulse (5m/1h/4h) | 3-41/day | cost |
+| Funding carry | ~monthly | yields less than T-bills |
+| Time-series momentum 28d/5d | 23/yr | no out-of-sample signal |
+
+Two methodological rules earned the hard way, worth keeping for anything
+tested next:
+
+1. **Hold out coins, not just dates.** A single train/test split did not
+   catch the 90d/5d variant; 13 unseen coins did, and reversed its sign.
+2. **Do not score the warm-up.** Including days when a rule structurally
+   cannot fire reports it as "flat", which flatters it in a crash. Fixing
+   this moved the headline result from +120% to -6.7%.
+
+Remaining candidates, and what would have to be true for each:
+
+1. **Cross-sectional momentum** — same data and fetcher, ranks across coins
+   instead of against a coin's own history. The one real reason to expect
+   something different: it is market-neutral by construction, so it does not
+   need the direction call that just failed twice.
+2. **Size / volume factor portfolios** — lowest turnover in the literature;
+   needs the volume field the strategy currently discards.
+3. **Cost-aware execution filter** — not a strategy, a gate. Only useful
+   bolted onto something that already has a signal.
+
+Given the scorecard, the honest prior on #1 is low. It is cheap to test
+(hours, on data already downloaded), which is the only reason to test it.
 
 ## Sources
 
